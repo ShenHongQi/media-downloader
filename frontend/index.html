@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Media Downloader</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Media Downloader</h1>
+            <p class="subtitle">粘贴分享链接，获取无水印资源</p>
+        </header>
+
+        <main>
+            <div class="input-section">
+                <textarea id="urlInput" placeholder="粘贴分享链接（支持抖音、B站、小红书、快手、TikTok、Instagram）&#10;&#10;支持多个链接，每行一个"></textarea>
+                <button id="parseBtn" onclick="handleParse()">解析</button>
+            </div>
+
+            <div id="loading" class="loading hidden">
+                <div class="spinner"></div>
+                <span>解析中...</span>
+            </div>
+
+            <div id="results" class="results"></div>
+        </main>
+
+        <footer>
+            <div class="platforms">
+                <span class="badge">抖音</span>
+                <span class="badge">B站</span>
+                <span class="badge">小红书</span>
+                <span class="badge">快手</span>
+                <span class="badge">TikTok</span>
+                <span class="badge">Instagram</span>
+            </div>
+        </footer>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>
