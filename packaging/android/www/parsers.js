@@ -80,27 +80,13 @@ async function httpPost(url, body, options = {}) {
 }
 
 async function resolveRedirect(url) {
-    if (window.Capacitor && window.Capacitor.Plugins.CapacitorHttp) {
-        const resp = await window.Capacitor.Plugins.CapacitorHttp.get({
-            url,
-            headers: {
-                "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
-            },
-            disableRedirects: true,
-            readTimeout: 10000,
-            connectTimeout: 10000,
-        });
-        if ([301, 302, 303, 307, 308].includes(resp.status)) {
-            return resp.headers["Location"] || resp.headers["location"] || url;
-        }
+    // CapacitorHttp patches fetch -> native, follows redirects, no CORS.
+    try {
+        const resp = await fetch(url, { redirect: "follow" });
         return resp.url || url;
+    } catch (e) {
+        return url;
     }
-
-    const resp = await fetch(url, { redirect: "manual" });
-    if (resp.type === "opaqueredirect" || [301, 302, 303, 307, 308].includes(resp.status)) {
-        return resp.headers.get("location") || url;
-    }
-    return resp.url || url;
 }
 
 // --- Parsers ---
@@ -247,16 +233,40 @@ class XiaohongshuParser {
     }
 
     async parse(url) {
-        if (url.includes("xhslink")) url = await resolveRedirect(url);
-        const m = url.match(/\/explore\/([a-f0-9]+)/);
+        // Fetch the short link / full url once: follow redirects natively (no CORS),
+        // capture final URL + page HTML in one shot.
+        let finalUrl = url;
+        let html = "";
+        try {
+            const resp = await fetch(url, {
+                redirect: "follow",
+                headers: { "User-Agent": MOBILE_UA },
+            });
+            finalUrl = resp.url || url;
+            html = await resp.text();
+        } catch (e) {
+            throw new Error("小红书请求失败: " + e.message);
+        }
+
+        // noteId may be in /explore/, /discovery/item/, or /item/
+        let m = finalUrl.match(/(?:explore|discovery\/item|item)\/([a-f0-9]{8,})/);
+        if (!m) {
+            // try to find a xiaohongshu link inside the page (JS-redirect stub)
+            m = html.match(/xiaohongshu\.com\/(?:explore|discovery\/item)\/([a-f0-9]{8,})/);
+        }
         if (!m) throw new Error("无法提取小红书笔记 ID");
         const noteId = m[1];
 
-        const resp = await httpGet(`https://www.xiaohongshu.com/explore/${noteId}`, {
-            headers: { "User-Agent": DESKTOP_UA },
-        });
-        const html = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
-        const stateMatch = html.match(/window\.__INITIAL_STATE__\s*=\s*(.+?)<\/script>/);
+        // Prefer the page we already fetched if it has the state; else fetch canonical explore page.
+        let stateHtml = html;
+        let stateMatch = stateHtml.match(/window\.__INITIAL_STATE__\s*=\s*(.+?)<\/script>/);
+        if (!stateMatch) {
+            const r2 = await httpGet(`https://www.xiaohongshu.com/explore/${noteId}`, {
+                headers: { "User-Agent": MOBILE_UA },
+            });
+            stateHtml = typeof r2.data === "string" ? r2.data : "";
+            stateMatch = stateHtml.match(/window\.__INITIAL_STATE__\s*=\s*(.+?)<\/script>/);
+        }
         if (!stateMatch) throw new Error("小红书页面解析失败");
 
         const raw = stateMatch[1].replace(/undefined/g, "null");

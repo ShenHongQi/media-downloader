@@ -464,3 +464,28 @@ header {
     max-height: 100%;
     object-fit: contain;
 }
+
+/* Paste/Clear toolbar */
+.input-toolbar {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.tool-btn {
+    padding: 6px 14px;
+    background: var(--surface);
+    border: 1px solid var(--surface2);
+    color: var(--text);
+    border-radius: 8px;
+    font-size: 0.8rem;
+    cursor: pointer;
+}
+
+.tool-btn:hover {
+    background: var(--surface2);
+}
+
+.tool-btn.hidden {
+    display: none;
+}

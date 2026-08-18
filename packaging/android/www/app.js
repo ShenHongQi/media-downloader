@@ -66,6 +66,35 @@ function extractUrls(text) {
     return [...new Set(text.match(urlRegex) || [])];
 }
 
+// --- Paste / Clear toolbar ---
+function toggleToolButtons() {
+    const text = document.getElementById("urlInput").value.trim();
+    document.getElementById("pasteBtn").classList.toggle("hidden", text.length > 0);
+    document.getElementById("clearBtn").classList.toggle("hidden", text.length === 0);
+}
+
+async function pasteFromClipboard() {
+    try {
+        const text = await navigator.clipboard.readText();
+        if (text) {
+            const ta = document.getElementById("urlInput");
+            ta.value = (ta.value ? ta.value + "\n" : "") + text;
+            toggleToolButtons();
+        } else {
+            alert("剪贴板为空");
+        }
+    } catch (e) {
+        alert("无法读取剪贴板，请手动长按输入框粘贴");
+    }
+}
+
+function clearInput() {
+    const ta = document.getElementById("urlInput");
+    ta.value = "";
+    toggleToolButtons();
+    ta.focus();
+}
+
 // --- Parse ---
 async function handleParse() {
     const input = document.getElementById("urlInput").value.trim();
@@ -295,3 +324,7 @@ document.getElementById("urlInput").addEventListener("keydown", (e) => {
         handleParse();
     }
 });
+
+document.getElementById("urlInput").addEventListener("input", toggleToolButtons);
+// initial toggle
+toggleToolButtons();

@@ -1,79 +1,52 @@
-# 修复 Android 下载：自建原生下载器替代 @capacitor-community/media
+# 修复小红书解析 + 添加粘贴/清除按钮
 
 ## Context
 
-当前 Android APK 下载功能持续失败，报两个错：
-1. "Missing the following permissions in AndroidManifest.xml: READ_EXTERNAL_STORAGE, WRITE_EXTERNAL_STORAGE"
-2. "Input file path is required"
-
-根因：`@capacitor-community/media` 插件问题多——
-- 权限流走 `requestAllPermissions`，依赖 Capacitor 对 `@Permission` 注解的 manifest 校验，版本/API 敏感（API 29/33 走不同 alias），极易失败
-- `_saveMedia` 硬性要求 `albumIdentifier`（须先 `getAlbums()`）
-- 即便走通也脆弱、依赖运行时权限授予
-
-**目标：** 用自建原生 Capacitor 插件直接通过 Android `MediaStore` 写入相册，API 29+ 完全无需运行时权限，最稳定可靠；同时让 B站视频（需 Referer）也能下载。
+抖音下载已成功。两个待解决：
+1. **小红书短链解析失败**："无法提取小红书笔记 ID"。根因：`xhslink.cn` 短链 302 重定向后的落地 URL 是 `xiaohongshu.com/discovery/item/<noteId>`，但 `XiaohongshuParser.parse` 只匹配 `/explore/([a-f0-9]+)`，匹配不到就报错。
+2. **UI 完善**：空输入时提供"一键粘贴"按钮（从剪贴板粘入）；有内容时提供"一键清除"按钮。
 
 ## 方案
 
-### 1. 新建原生插件 `DownloaderPlugin.java`
+### 1. 修复小红书解析（`packaging/android/www/parsers.js`）
 
-路径：`packaging/android/android/app/src/main/java/com/shq/mediadownloader/DownloaderPlugin.java`
+重写 `XiaohongshuParser.parse`：
+- 不再单独依赖 `resolveRedirect`，直接 `fetch(url, { redirect: "follow", headers: { "User-Agent": MOBILE_UA } })` 一次请求拿到**最终 URL + 页面 HTML**（CapacitorHttp 已 patch fetch，原生层无 CORS、自动跟随重定向）
+- noteId 提取正则扩展为：`/(?:explore|discovery\/item|item)\/([a-f0-9]{8,})/`，优先从 `resp.url` 取，取不到再从 HTML 里搜 `xiaohongshu.com/(explore|discovery/item)/...`
+- HTML 里若有 `__INITIAL_STATE__` 直接用；否则用 noteId 兜底请求 `https://www.xiaohongshu.com/explore/{noteId}` 再解析
+- 用最终落地 URL（含 xsec_token 等）请求，比重建 explore URL 更稳
 
-接受参数：`{ url, filename, isVideo, referer }`，用 OkHttp 下载（可带 Referer 头解决 B站 403），然后：
-- **API 29+ (Android 10+)**：用 `MediaStore.Images/Video.Media` + `RELATIVE_PATH` 插入到 `Pictures/MediaDownloader` 或 `Movies/MediaDownloader`，**无需任何权限**
-- **API < 29**：写到 `Environment.getExternalStoragePublicDirectory(...)`（manifest 已声明 WRITE_EXTERNAL_STORAGE）
+同时把 `resolveRedirect` 简化为 `fetch follow` 取 `resp.url`（抖音/b23.tv/快手仍走此函数，保持兼容）。
 
-返回成功/失败。OkHttp 已通过 Capacitor 核心依赖可用。
+### 2. 添加粘贴/清除按钮（`packaging/android/www/index.html` + `app.js` + `style.css`）
 
-### 2. 注册插件到 `MainActivity.java`
-
-```java
-package com.shq.mediadownloader;
-
-import android.os.Bundle;
-import com.getcapacitor.BridgeActivity;
-
-public class MainActivity extends BridgeActivity {
-    @Override
-    public void onCreate(Bundle savedInstanceState) {
-        registerPlugin(DownloaderPlugin.class);
-        super.onCreate(savedInstanceState);
-    }
-}
+**HTML**：在 textarea 上方加一个工具栏：
+```html
+<div class="input-toolbar">
+    <button id="pasteBtn" class="tool-btn">📋 粘贴链接</button>
+    <button id="clearBtn" class="tool-btn hidden">✕ 清除</button>
+</div>
 ```
 
-### 3. 改写 `packaging/android/www/app.js` 下载逻辑
+**app.js**：
+- `pasteFromClipboard()`：`navigator.clipboard.readText()` 读剪贴板写入 textarea（Capacitor WebView origin 为 `https://localhost`，clipboard API 在用户点击手势下可用），失败时 alert 提示手动粘贴
+- `clearInput()`：清空 textarea，focus 回输入框
+- textarea 的 `input` 事件 → `toggleToolButtons()`：有内容显示清除按钮、隐藏粘贴按钮；无内容反之
+- 初始化时调用一次 toggle
 
-- `downloadMedia(url, filename, isVideo, platform, btn)`：直接调 `window.Capacitor.Plugins.Downloader.save({url, filename, isVideo, referer})`，**不再 fetch blob/base64**（省内存，大视频也 OK）
-- 平台 → Referer 映射：
-  - douyin → https://www.douyin.com/
-  - bilibili → https://www.bilibili.com/
-  - xiaohongshu → https://www.xiaohongshu.com/
-  - kuaishou → https://v.kuaishou.com/
-  - tiktok → https://www.tiktok.com/
-  - instagram → https://www.instagram.com/
-- `downloadAll`：循环调 `Downloader.save`
-- 保留 @capacitor/app 的返回键逻辑、lightbox
-
-### 4. 清理依赖（可选）
-
-- 卸载 `@capacitor-community/media`（不再使用）
-- 卸载 `@capacitor/filesystem`（不再使用，下载在原生层完成）
-- `npx cap sync android` 刷新
-
-保留 `@capacitor/app`（返回键需要）。
+**style.css**：`.input-toolbar` flex 布局，`.tool-btn` 小按钮样式，复用暗色主题变量；`.hidden` 复用已有的 `display:none`。
 
 ## 涉及文件
 
-- 新增：`packaging/android/android/app/src/main/java/com/shq/mediadownloader/DownloaderPlugin.java`
-- 修改：`packaging/android/android/app/src/main/java/com/shq/mediadownloader/MainActivity.java`
-- 修改：`packaging/android/www/app.js`
-- 可选：`packaging/android/package.json`（移除 media/filesystem）
+- 修改：`packaging/android/www/parsers.js`（resolveRedirect + XiaohongshuParser）
+- 修改：`packaging/android/www/index.html`（input-toolbar）
+- 修改：`packaging/android/www/app.js`（粘贴/清除/toggle 逻辑）
+- 修改：`packaging/android/www/style.css`（工具栏样式）
 
 ## 验证
 
-1. `npx cap sync android && cd android && ./gradlew assembleDebug` 构建成功
+1. `npx cap copy android && cd android && ./gradlew assembleDebug`
 2. 安装新 APK
-3. 抖音图文：点单张下载 → 看相册 `Pictures/MediaDownloader` 出现图片；点"全部下载" → 全部入相册
-4. B站视频：下载 → `Movies/MediaDownloader` 出现视频（Referer 头解决 403）
-5. 不再有权限弹窗（API 29+）和报错
+3. 粘贴小红书链接 `https://xhslink.cn/o/72Q1GlvETWE` → 解析出图文/视频、可下载
+4. 空输入时显示"粘贴链接"按钮，点击自动填入剪贴板内容；有内容时显示"清除"按钮
+5. 抖音/B站回归测试仍正常

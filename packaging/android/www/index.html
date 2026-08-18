@@ -30,6 +30,10 @@
 
         <main>
             <div class="input-section">
+                <div class="input-toolbar">
+                    <button id="pasteBtn" class="tool-btn" onclick="pasteFromClipboard()">📋 粘贴链接</button>
+                    <button id="clearBtn" class="tool-btn hidden" onclick="clearInput()">✕ 清除</button>
+                </div>
                 <textarea id="urlInput" placeholder="粘贴分享链接（支持抖音、B站、小红书、快手、TikTok、Instagram）"></textarea>
                 <button id="parseBtn" onclick="handleParse()">解析</button>
             </div>
