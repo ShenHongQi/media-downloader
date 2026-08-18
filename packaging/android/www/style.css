@@ -70,18 +70,6 @@ textarea::placeholder {
     color: var(--text-dim);
 }
 
-button {
-    padding: 14px 32px;
-    background: var(--accent);
-    color: white;
-    border: none;
-    border-radius: var(--radius);
-    font-size: 1rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: opacity 0.2s, transform 0.1s;
-}
-
 button:hover {
     opacity: 0.9;
 }
@@ -465,27 +453,44 @@ header {
     object-fit: contain;
 }
 
-/* Paste/Clear toolbar */
-.input-toolbar {
+
+/* Action row: paste / clear / parse, equal width, same style */
+.action-row {
     display: flex;
-    justify-content: flex-end;
-    gap: 8px;
+    gap: 10px;
 }
 
-.tool-btn {
-    padding: 6px 14px;
-    background: var(--surface);
-    border: 1px solid var(--surface2);
-    color: var(--text);
-    border-radius: 8px;
-    font-size: 0.8rem;
-    cursor: pointer;
-}
-
-.tool-btn:hover {
+.action-btn {
+    flex: 1;
+    padding: 14px 16px;
     background: var(--surface2);
+    color: var(--text);
+    border: none;
+    border-radius: var(--radius);
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.2s, transform 0.1s;
 }
 
-.tool-btn.hidden {
+.action-btn:active {
+    transform: scale(0.98);
+}
+
+.action-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.action-btn.primary {
+    background: var(--accent);
+    color: white;
+}
+
+.action-btn:hover {
+    opacity: 0.9;
+}
+
+.action-btn.hidden {
     display: none;
 }

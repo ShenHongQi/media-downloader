@@ -74,16 +74,23 @@ function toggleToolButtons() {
 }
 
 async function pasteFromClipboard() {
+    let text = "";
     try {
-        const text = await navigator.clipboard.readText();
-        if (text) {
-            const ta = document.getElementById("urlInput");
-            ta.value = (ta.value ? ta.value + "\n" : "") + text;
-            toggleToolButtons();
-        } else {
-            alert("剪贴板为空");
+        const Clip = window.Capacitor?.Plugins?.Clipboard;
+        if (Clip) {
+            const res = await Clip.read();
+            text = res.value || "";
+        } else if (navigator.clipboard && navigator.clipboard.readText) {
+            text = await navigator.clipboard.readText();
         }
     } catch (e) {
+        // fall through
+    }
+    if (text) {
+        const ta = document.getElementById("urlInput");
+        ta.value = (ta.value ? ta.value + "\n" : "") + text;
+        toggleToolButtons();
+    } else {
         alert("无法读取剪贴板，请手动长按输入框粘贴");
     }
 }

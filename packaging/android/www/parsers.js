@@ -248,13 +248,15 @@ class XiaohongshuParser {
             throw new Error("小红书请求失败: " + e.message);
         }
 
-        // noteId may be in /explore/, /discovery/item/, or /item/
-        let m = finalUrl.match(/(?:explore|discovery\/item|item)\/([a-f0-9]{8,})/);
+        // noteId may live in /explore/, /discovery/item/, /item/, or /note/ — charset is not strictly hex.
+        const ID = "[A-Za-z0-9_-]{16,32}";
+        let m = finalUrl.match(new RegExp(`(?:explore|discovery/item|item|notes?)/(${ID})`));
+        if (!m) m = html.match(new RegExp(`xiaohongshu\\.com/(?:explore|discovery/item)/(${ID})`));
+        if (!m) m = html.match(new RegExp(`"noteId"\\s*[:=]\\s*"(${ID})"`));
+        if (!m) m = html.match(new RegExp(`note/(${ID})`));
         if (!m) {
-            // try to find a xiaohongshu link inside the page (JS-redirect stub)
-            m = html.match(/xiaohongshu\.com\/(?:explore|discovery\/item)\/([a-f0-9]{8,})/);
+            throw new Error("无法提取小红书笔记 ID (finalUrl=" + finalUrl.slice(0, 80) + ")");
         }
-        if (!m) throw new Error("无法提取小红书笔记 ID");
         const noteId = m[1];
 
         // Prefer the page we already fetched if it has the state; else fetch canonical explore page.
