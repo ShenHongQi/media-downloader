@@ -1,118 +1,79 @@
-# Flutter 跨平台打包方案（Windows + Android）
+# 修复 Android 下载：自建原生下载器替代 @capacitor-community/media
 
 ## Context
 
-已有一个 Python FastAPI 后端 + H5 前端的 media-downloader 工具，用户希望打包成独立安装包：
-- Windows: .exe 安装包，双击即用
-- Android: .apk 安装包，下载安装即可使用
-- 两端均需支持：独立使用（内置解析）+ 连接远程服务器
+当前 Android APK 下载功能持续失败，报两个错：
+1. "Missing the following permissions in AndroidManifest.xml: READ_EXTERNAL_STORAGE, WRITE_EXTERNAL_STORAGE"
+2. "Input file path is required"
 
-## 方案：Flutter 统一开发
+根因：`@capacitor-community/media` 插件问题多——
+- 权限流走 `requestAllPermissions`，依赖 Capacitor 对 `@Permission` 注解的 manifest 校验，版本/API 敏感（API 29/33 走不同 alias），极易失败
+- `_saveMedia` 硬性要求 `albumIdentifier`（须先 `getAlbums()`）
+- 即便走通也脆弱、依赖运行时权限授予
 
-使用 Flutter 构建一个跨平台客户端，目标平台 Windows + Android。解析逻辑从 Python 移植到 Dart（HTTP 请求 + 正则 + JSON 解析，逻辑相同，语言不同）。
+**目标：** 用自建原生 Capacitor 插件直接通过 Android `MediaStore` 写入相册，API 29+ 完全无需运行时权限，最稳定可靠；同时让 B站视频（需 Referer）也能下载。
 
-### 为什么选 Flutter 而不是其他方案
+## 方案
 
-| 方案 | Windows | Android | 开发量 | 体验 |
-|------|---------|---------|--------|------|
-| Flutter（推荐） | ✅ 原生窗口 | ✅ 原生 APK | 一套代码 | 原生流畅 |
-| PyInstaller + WebView | ✅ | ❌ 需另做 | 两套 | Windows 好，Android 无 |
-| Electron + Capacitor | ✅ | ✅ | 包大(200MB+) | 重，吃内存 |
-| React Native | ❌ 不支持 Win | ✅ | 只能 Android | 覆盖不全 |
+### 1. 新建原生插件 `DownloaderPlugin.java`
 
-## 项目结构
+路径：`packaging/android/android/app/src/main/java/com/shq/mediadownloader/DownloaderPlugin.java`
 
-```
-media-downloader/
-├── backend/              # 保留，用于服务器部署
-├── frontend/             # 保留，Web 版
-├── flutter_app/          # 新增 Flutter 项目
-│   ├── lib/
-│   │   ├── main.dart
-│   │   ├── models/
-│   │   │   └── media_result.dart      # 数据模型（对应 Python models.py）
-│   │   ├── parsers/
-│   │   │   ├── base_parser.dart       # 解析器基类
-│   │   │   ├── parser_registry.dart   # 注册表
-│   │   │   ├── douyin_parser.dart     # 抖音
-│   │   │   ├── bilibili_parser.dart   # B站
-│   │   │   ├── xiaohongshu_parser.dart
-│   │   │   ├── kuaishou_parser.dart
-│   │   │   ├── tiktok_parser.dart
-│   │   │   └── instagram_parser.dart
-│   │   ├── services/
-│   │   │   ├── parse_service.dart     # 解析调度（本地/远程）
-│   │   │   └── download_service.dart  # 下载+保存
-│   │   ├── pages/
-│   │   │   ├── home_page.dart         # 主页（输入+结果）
-│   │   │   └── settings_page.dart     # 设置（服务器地址等）
-│   │   └── widgets/
-│   │       ├── media_card.dart        # 结果卡片
-│   │       └── platform_badge.dart
-│   ├── android/
-│   ├── windows/
-│   └── pubspec.yaml
+接受参数：`{ url, filename, isVideo, referer }`，用 OkHttp 下载（可带 Referer 头解决 B站 403），然后：
+- **API 29+ (Android 10+)**：用 `MediaStore.Images/Video.Media` + `RELATIVE_PATH` 插入到 `Pictures/MediaDownloader` 或 `Movies/MediaDownloader`，**无需任何权限**
+- **API < 29**：写到 `Environment.getExternalStoragePublicDirectory(...)`（manifest 已声明 WRITE_EXTERNAL_STORAGE）
+
+返回成功/失败。OkHttp 已通过 Capacitor 核心依赖可用。
+
+### 2. 注册插件到 `MainActivity.java`
+
+```java
+package com.shq.mediadownloader;
+
+import android.os.Bundle;
+import com.getcapacitor.BridgeActivity;
+
+public class MainActivity extends BridgeActivity {
+    @Override
+    public void onCreate(Bundle savedInstanceState) {
+        registerPlugin(DownloaderPlugin.class);
+        super.onCreate(savedInstanceState);
+    }
+}
 ```
 
-## 核心逻辑移植（Python → Dart）
+### 3. 改写 `packaging/android/www/app.js` 下载逻辑
 
-解析逻辑本质是：
-1. 正则匹配 URL → 识别平台
-2. HTTP GET/POST 获取数据（重定向跟踪、Cookie 管理）
-3. 正则/JSON 提取媒体资源 URL
+- `downloadMedia(url, filename, isVideo, platform, btn)`：直接调 `window.Capacitor.Plugins.Downloader.save({url, filename, isVideo, referer})`，**不再 fetch blob/base64**（省内存，大视频也 OK）
+- 平台 → Referer 映射：
+  - douyin → https://www.douyin.com/
+  - bilibili → https://www.bilibili.com/
+  - xiaohongshu → https://www.xiaohongshu.com/
+  - kuaishou → https://v.kuaishou.com/
+  - tiktok → https://www.tiktok.com/
+  - instagram → https://www.instagram.com/
+- `downloadAll`：循环调 `Downloader.save`
+- 保留 @capacitor/app 的返回键逻辑、lightbox
 
-Dart 完全能胜任（`http`/`dio` 包 + `RegExp` + `dart:convert`）。
+### 4. 清理依赖（可选）
 
-### 移植对照
+- 卸载 `@capacitor-community/media`（不再使用）
+- 卸载 `@capacitor/filesystem`（不再使用，下载在原生层完成）
+- `npx cap sync android` 刷新
 
-| Python | Dart |
-|--------|------|
-| `httpx.AsyncClient` | `dio` 包 |
-| `re.search()` | `RegExp().firstMatch()` |
-| `json.loads()` | `jsonDecode()` |
-| `follow_redirects=False` | `dio.options.followRedirects = false` |
+保留 `@capacitor/app`（返回键需要）。
 
-## 功能设计
+## 涉及文件
 
-### 双模式工作
-- **本地模式（默认）**：解析逻辑内置在 App 中，无需服务器
-- **远程模式**：连接用户部署的后端 API（设置页面配置服务器地址）
+- 新增：`packaging/android/android/app/src/main/java/com/shq/mediadownloader/DownloaderPlugin.java`
+- 修改：`packaging/android/android/app/src/main/java/com/shq/mediadownloader/MainActivity.java`
+- 修改：`packaging/android/www/app.js`
+- 可选：`packaging/android/package.json`（移除 media/filesystem）
 
-### 下载功能
-- Windows：保存到"下载"文件夹，可自选路径
-- Android：保存到相册/下载目录，请求存储权限
+## 验证
 
-### UI 设计
-- Material 3 风格
-- 暗色主题为主（与 Web 版一致）
-- 首页：输入框 + 解析按钮 + 结果列表
-- 支持从其他 App 分享链接到本应用（Android Share Intent）
-
-## 构建产物
-
-- **Windows**: `flutter build windows` → 生成 exe + dll 目录，用 Inno Setup 打包为安装包
-- **Android**: `flutter build apk` → 生成 .apk 文件，直接安装
-
-## 实施顺序
-
-1. 初始化 Flutter 项目，配置 Windows + Android 目标
-2. 实现数据模型（MediaResult 等）
-3. 移植解析器（先抖音 + B站，验证可行性）
-4. 实现 UI（主页、结果卡片、设置页）
-5. 实现下载功能（平台差异化处理）
-6. 移植剩余解析器
-7. 构建 Windows exe + Android apk
-8. 测试
-
-## 前置条件
-
-需要在 Mac 上安装：
-- Flutter SDK
-- Android SDK（Android Studio）
-- 注意：Mac 上无法直接构建 Windows exe（需要在 Windows 上构建），但可以构建 Android APK
-
-## 验证方式
-
-- `flutter run -d windows`（如在 Windows 上）或 `flutter run -d android` 测试
-- Mac 上可以用 `flutter run -d macos` 验证逻辑，再到 Windows 上打最终包
-- 用真实抖音/B站链接测试解析+下载
+1. `npx cap sync android && cd android && ./gradlew assembleDebug` 构建成功
+2. 安装新 APK
+3. 抖音图文：点单张下载 → 看相册 `Pictures/MediaDownloader` 出现图片；点"全部下载" → 全部入相册
+4. B站视频：下载 → `Movies/MediaDownloader` 出现视频（Referer 头解决 403）
+5. 不再有权限弹窗（API 29+）和报错

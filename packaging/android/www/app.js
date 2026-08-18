@@ -1,6 +1,16 @@
 // --- Plugins (plain JS access, no bundler) ---
-const { App, Filesystem, Media } =
-  (window.Capacitor && window.Capacitor.Plugins) || {};
+const { App } = (window.Capacitor && window.Capacitor.Plugins) || {};
+const Downloader = (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Downloader) || null;
+
+// Platform -> Referer header (bilibili needs it to avoid 403)
+const PLATFORM_REFERER = {
+    douyin: "https://www.douyin.com/",
+    bilibili: "https://www.bilibili.com/",
+    xiaohongshu: "https://www.xiaohongshu.com/",
+    kuaishou: "https://v.kuaishou.com/",
+    tiktok: "https://www.tiktok.com/",
+    instagram: "https://www.instagram.com/",
+};
 
 // --- Settings ---
 let parseMode = localStorage.getItem("parseMode") || "local";
@@ -8,13 +18,6 @@ let serverUrl = localStorage.getItem("serverUrl") || "";
 
 // --- Lightbox state (for back button handling) ---
 let lightboxOpen = false;
-
-function overlayOpen() {
-    return (
-        lightboxOpen ||
-        !document.getElementById("settingsPanel").classList.contains("hidden")
-    );
-}
 
 // --- Android back button ---
 if (App) {
@@ -142,6 +145,8 @@ function renderResults(resultList, errors) {
 }
 
 function createCard(result) {
+    // unique id in case multiple results share platform
+    const uid = `${result.platform}-${Math.random().toString(36).slice(2, 8)}`;
     const card = document.createElement("div");
     card.className = "card";
     card.innerHTML = `
@@ -152,13 +157,11 @@ function createCard(result) {
         </div>
         <div class="card-body">
             ${renderPreview(result)}
-            <div class="card-actions" id="actions-${result.platform}"></div>
+            <div class="card-actions" id="actions-${uid}"></div>
         </div>
     `;
-    // Build action buttons after insertion
-    const actions = card.querySelector(`#actions-${result.platform}`);
+    const actions = card.querySelector(`#actions-${uid}`);
     actions.appendChild(renderActions(result));
-    // Wire up image clicks for lightbox
     card.querySelectorAll(".media-preview img").forEach((img) => {
         img.addEventListener("click", () => openLightbox(img.src));
     });
@@ -188,7 +191,7 @@ function renderActions(result) {
         const allBtn = document.createElement("button");
         allBtn.className = "dl-btn";
         allBtn.textContent = `⬇ 全部下载 (${result.items.length})`;
-        allBtn.onclick = () => downloadAll(result);
+        allBtn.onclick = () => downloadAll(result, allBtn);
         wrap.appendChild(allBtn);
     }
 
@@ -196,87 +199,74 @@ function renderActions(result) {
     result.items.forEach((item, i) => {
         const btn = document.createElement("button");
         btn.className = "dl-btn";
+        const isVideo = result.media_type === "video" || item.url.includes(".mp4");
         if (result.media_type === "video") {
             btn.textContent = "⬇ 下载视频";
         } else {
             btn.textContent = `⬇ 第${i + 1}张`;
         }
-        const ext = item.url.includes(".mp4") ? "mp4" : "jpg";
-        const filename = `${result.platform}_${i + 1}.${ext}`;
-        btn.onclick = () => downloadMedia(item.url, filename, result.media_type === "video" ? "video" : "image", btn);
+        const ext = isVideo ? "mp4" : "jpg";
+        const filename = `${result.platform}_${i + 1}`;
+        btn.onclick = () => downloadMedia(item.url, filename, isVideo, result.platform, btn);
         wrap.appendChild(btn);
     });
 
     return wrap;
 }
 
-// --- Download via native plugins ---
-// Media.savePhoto/saveVideo accept `path`: a web URL, base64 data URI, or local file path.
-function getBase64DataUri(url, isVideo) {
-    const mime = isVideo ? "video/mp4" : "image/jpeg";
-    return fetch(url)
-        .then((r) => r.blob())
-        .then(
-            (blob) =>
-                new Promise((resolve, reject) => {
-                    const reader = new FileReader();
-                    reader.onloadend = () => resolve(reader.result.replace(`data:application/octet-stream`, `data:${mime}`));
-                    reader.onerror = reject;
-                    reader.readAsDataURL(blob);
-                })
-        )
-        .then((dataUri) => dataUri.startsWith("data:") ? dataUri : `data:${mime};base64,${dataUri}`);
-}
-
-async function downloadMedia(url, filename, type, btn) {
-    if (!Media) {
-        alert("下载插件未就绪，请用远程模式（需后端服务器代理下载）");
+// --- Download via native Downloader plugin ---
+// Pass URL directly to native; native downloads + saves to gallery via MediaStore.
+async function downloadMedia(url, filename, isVideo, platform, btn) {
+    if (!Downloader) {
+        alert("下载插件未就绪");
         return;
     }
-    const isVideo = type === "video";
     const original = btn ? btn.textContent : "";
     if (btn) {
         btn.disabled = true;
         btn.textContent = "下载中...";
     }
     try {
-        const dataUri = await getBase64DataUri(url, isVideo);
-        if (isVideo) {
-            await Media.saveVideo({ path: dataUri });
-        } else {
-            await Media.savePhoto({ path: dataUri });
-        }
+        await Downloader.save({
+            url: url,
+            filename: filename,
+            isVideo: isVideo,
+            referer: PLATFORM_REFERER[platform] || null,
+        });
         if (btn) btn.textContent = "✓ 已保存到相册";
         setTimeout(() => { if (btn) { btn.textContent = original; btn.disabled = false; } }, 2000);
     } catch (e) {
         if (btn) { btn.textContent = original; btn.disabled = false; }
-        alert("下载失败: " + e.message);
+        alert("下载失败: " + (e.message || e));
     }
 }
 
-async function downloadAll(result) {
-    if (!Media) {
+async function downloadAll(result, btn) {
+    if (!Downloader) {
         alert("下载插件未就绪");
         return;
     }
+    const original = btn.textContent;
     let ok = 0;
     let fail = 0;
     for (let i = 0; i < result.items.length; i++) {
         const item = result.items[i];
-        const isVideo = item.url.includes(".mp4") || result.media_type === "video";
+        const isVideo = result.media_type === "video" || item.url.includes(".mp4");
+        if (btn) btn.textContent = `下载中 ${i + 1}/${result.items.length}`;
         try {
-            const dataUri = await getBase64DataUri(item.url, isVideo);
-            if (isVideo) {
-                await Media.saveVideo({ path: dataUri });
-            } else {
-                await Media.savePhoto({ path: dataUri });
-            }
+            await Downloader.save({
+                url: item.url,
+                filename: `${result.platform}_${i + 1}`,
+                isVideo: isVideo,
+                referer: PLATFORM_REFERER[result.platform] || null,
+            });
             ok++;
         } catch (e) {
             console.error("item", i, e);
             fail++;
         }
     }
+    if (btn) { btn.textContent = original; btn.disabled = false; }
     alert(`已保存 ${ok} 个${fail ? `，失败 ${fail} 个` : ""}到相册`);
 }
 
