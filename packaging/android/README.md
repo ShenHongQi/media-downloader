@@ -20,35 +20,40 @@ npx cap add android
 # 3. 同步前端代码到 Android 项目
 npx cap sync android
 
-# 4. 打开 Android Studio 构建 APK
-npx cap open android
-```
-
-在 Android Studio 中：
-- 菜单 **Build → Build Bundle(s) / APK(s) → Build APK(s)**
-- APK 输出路径: `android/app/build/outputs/apk/debug/app-debug.apk`
-
-## 或者命令行构建（不开 Android Studio）
-
-```bash
+# 4. 命令行构建 APK
 cd android
 ./gradlew assembleDebug
 ```
 
 APK 位置: `android/app/build/outputs/apk/debug/app-debug.apk`
 
+或者用 Android Studio 构建：
+```bash
+npx cap open android
+# 菜单 Build → Build APK(s)
+```
+
 ## 使用说明
 
-1. 将 APK 发送到手机，安装
-2. 首次打开会弹出设置页面，输入你的后端服务器地址，如：
-   - `http://192.168.1.100:8000`（局域网内）
-   - `http://你的云主机IP:8000`（公网）
-3. 保存后，粘贴分享链接即可解析和下载
+安装 APK 后直接打开即可使用，**无需服务器**。
 
-## 注意事项
+### 两种模式
 
-- App 本身只是前端界面，需要配合后端服务使用
-- 后端可以部署在：
-  - 同一局域网的电脑上（Docker 或直接运行）
-  - 你的云主机上（172.29.5.110）
-- Android 9+ 默认禁止 HTTP 明文请求，已在 capacitor.config.json 中开启 cleartext
+- **本地解析（默认）**：App 内置解析逻辑，直接在手机上完成解析，无需任何服务器
+- **远程服务器**：点击右上角 ⚙ 切换为远程模式，输入后端服务器地址
+
+### 操作步骤
+
+1. 从抖音/B站/小红书等 App 复制分享链接
+2. 打开 Media Downloader，粘贴链接
+3. 点击「解析」
+4. 点击「下载」保存无水印资源
+
+## 支持平台
+
+- 抖音（视频、图文）
+- B站（视频）
+- 小红书（图文、视频）
+- 快手（视频）
+- TikTok（需要可访问 TikTok 的网络）
+- Instagram（需要可访问 Instagram 的网络）

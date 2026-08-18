@@ -15,10 +15,17 @@
         </header>
 
         <div id="settingsPanel" class="settings-panel hidden">
-            <label>服务器地址</label>
-            <input type="text" id="serverUrl" placeholder="http://192.168.1.100:8000">
+            <label>解析模式</label>
+            <div class="mode-switch">
+                <button id="modeLocal" class="mode-btn active" onclick="setMode('local')">本地解析</button>
+                <button id="modeRemote" class="mode-btn" onclick="setMode('remote')">远程服务器</button>
+            </div>
+            <div id="remoteConfig" class="hidden">
+                <label>服务器地址</label>
+                <input type="text" id="serverUrl" placeholder="http://192.168.1.100:8000">
+            </div>
             <button onclick="saveSettings()">保存</button>
-            <p class="hint">填写你部署后端服务的地址（含端口号）</p>
+            <p class="hint">本地解析：无需服务器，App 直接解析<br>远程服务器：连接你部署的后端服务</p>
         </div>
 
         <main>
@@ -35,6 +42,7 @@
             <div id="results" class="results"></div>
         </main>
     </div>
+    <script src="parsers.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

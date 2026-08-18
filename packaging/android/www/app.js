@@ -1,52 +1,54 @@
-// Server URL from settings or default
-function getApiBase() {
-    const saved = localStorage.getItem("serverUrl");
-    if (saved) return saved.replace(/\/$/, "") + "/api";
-    return null;
-}
-
-let API_BASE = getApiBase();
+// --- Settings ---
+let parseMode = localStorage.getItem("parseMode") || "local";
+let serverUrl = localStorage.getItem("serverUrl") || "";
 
 function toggleSettings() {
     const panel = document.getElementById("settingsPanel");
     panel.classList.toggle("hidden");
     if (!panel.classList.contains("hidden")) {
-        document.getElementById("serverUrl").value =
-            localStorage.getItem("serverUrl") || "";
+        document.getElementById("serverUrl").value = serverUrl;
+        updateModeUI();
     }
+}
+
+function setMode(mode) {
+    parseMode = mode;
+    updateModeUI();
+}
+
+function updateModeUI() {
+    document.getElementById("modeLocal").classList.toggle("active", parseMode === "local");
+    document.getElementById("modeRemote").classList.toggle("active", parseMode === "remote");
+    document.getElementById("remoteConfig").classList.toggle("hidden", parseMode !== "remote");
 }
 
 function saveSettings() {
-    const url = document.getElementById("serverUrl").value.trim();
-    if (!url) {
-        localStorage.removeItem("serverUrl");
-        API_BASE = null;
-    } else {
-        localStorage.setItem("serverUrl", url);
-        API_BASE = url.replace(/\/$/, "") + "/api";
-    }
+    localStorage.setItem("parseMode", parseMode);
+    serverUrl = document.getElementById("serverUrl").value.trim();
+    localStorage.setItem("serverUrl", serverUrl);
     document.getElementById("settingsPanel").classList.add("hidden");
-    alert("已保存");
 }
 
+// --- URL extraction ---
 function extractUrls(text) {
     const urlRegex = /https?:\/\/[^\s<>"']+/g;
     return [...new Set(text.match(urlRegex) || [])];
 }
 
+// --- Parse ---
 async function handleParse() {
-    if (!API_BASE) {
-        toggleSettings();
-        alert("请先配置服务器地址");
-        return;
-    }
-
     const input = document.getElementById("urlInput").value.trim();
     if (!input) return;
 
     const urls = extractUrls(input);
     if (urls.length === 0) {
         alert("未检测到有效链接");
+        return;
+    }
+
+    if (parseMode === "remote" && !serverUrl) {
+        toggleSettings();
+        alert("请先配置服务器地址");
         return;
     }
 
@@ -59,22 +61,44 @@ async function handleParse() {
     results.innerHTML = "";
 
     try {
-        const resp = await fetch(`${API_BASE}/parse`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ urls }),
-        });
-
-        const data = await resp.json();
-        renderResults(data.results, data.errors);
+        if (parseMode === "local") {
+            await parseLocal(urls);
+        } else {
+            await parseRemote(urls);
+        }
     } catch (e) {
-        results.innerHTML = `<div class="error-card">请求失败: ${e.message}<br>请检查服务器地址是否正确</div>`;
+        results.innerHTML = `<div class="error-card">解析失败: ${e.message}</div>`;
     } finally {
         btn.disabled = false;
         loading.classList.add("hidden");
     }
 }
 
+async function parseLocal(urls) {
+    const container = document.getElementById("results");
+
+    for (const url of urls) {
+        try {
+            const result = await parserRegistry.parse(url);
+            container.appendChild(createCard(result));
+        } catch (e) {
+            container.innerHTML += `<div class="error-card">${url}: ${e.message}</div>`;
+        }
+    }
+}
+
+async function parseRemote(urls) {
+    const apiBase = serverUrl.replace(/\/$/, "") + "/api";
+    const resp = await fetch(`${apiBase}/parse`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ urls }),
+    });
+    const data = await resp.json();
+    renderResults(data.results, data.errors);
+}
+
+// --- Render ---
 function renderResults(resultList, errors) {
     const container = document.getElementById("results");
     container.innerHTML = "";
@@ -119,10 +143,7 @@ function renderPreview(result) {
     if (result.media_type === "album" || result.media_type === "image") {
         const imgs = result.items
             .slice(0, 9)
-            .map((item) => {
-                const src = item.thumbnail || item.url;
-                return `<img src="${src}" alt="" loading="lazy">`;
-            })
+            .map((item) => `<img src="${item.url}" alt="" loading="lazy">`)
             .join("");
         return `<div class="media-preview">${imgs}</div>`;
     }
@@ -130,28 +151,27 @@ function renderPreview(result) {
 }
 
 function renderDownloadButtons(result) {
-    if (result.media_type === "video") {
-        const url = buildDownloadUrl(result.items[0].url, result.platform, "video.mp4");
-        return `<a href="${url}" target="_blank">⬇ 下载视频</a>`;
+    if (parseMode === "remote" && serverUrl) {
+        const apiBase = serverUrl.replace(/\/$/, "") + "/api";
+        if (result.media_type === "video") {
+            const params = new URLSearchParams({ url: result.items[0].url, platform: result.platform, filename: "video.mp4" });
+            return `<a href="${apiBase}/download?${params}" target="_blank">⬇ 下载视频</a>`;
+        }
+        return result.items.map((item, i) => {
+            const ext = item.url.includes(".mp4") ? "mp4" : "jpg";
+            const params = new URLSearchParams({ url: item.url, platform: result.platform, filename: `${result.platform}_${i+1}.${ext}` });
+            return `<a href="${apiBase}/download?${params}" target="_blank">⬇ ${i + 1}</a>`;
+        }).join("");
     }
 
-    return result.items
-        .map((item, i) => {
-            const ext = item.url.includes(".mp4") ? "mp4" : "jpg";
-            const filename = `${result.platform}_${i + 1}.${ext}`;
-            const url = buildDownloadUrl(item.url, result.platform, filename);
-            return `<a href="${url}" target="_blank">⬇ ${i + 1}</a>`;
-        })
-        .join("");
-}
-
-function buildDownloadUrl(resourceUrl, platform, filename) {
-    const params = new URLSearchParams({
-        url: resourceUrl,
-        platform: platform,
-        filename: filename,
-    });
-    return `${API_BASE}/download?${params.toString()}`;
+    // Local mode: direct link download
+    if (result.media_type === "video") {
+        return `<a href="${result.items[0].url}" target="_blank" download="video.mp4">⬇ 下载视频</a>`;
+    }
+    return result.items.map((item, i) => {
+        const ext = item.url.includes(".mp4") ? "mp4" : "jpg";
+        return `<a href="${item.url}" target="_blank" download="${result.platform}_${i+1}.${ext}">⬇ ${i + 1}</a>`;
+    }).join("");
 }
 
 function escapeHtml(text) {
@@ -165,8 +185,3 @@ document.getElementById("urlInput").addEventListener("keydown", (e) => {
         handleParse();
     }
 });
-
-// Show settings on first launch if no server configured
-if (!API_BASE) {
-    setTimeout(() => toggleSettings(), 500);
-}

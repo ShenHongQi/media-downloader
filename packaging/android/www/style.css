@@ -394,3 +394,27 @@ header {
     color: var(--text-dim);
     margin-top: 8px;
 }
+
+.mode-switch {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.mode-btn {
+    flex: 1;
+    padding: 8px;
+    background: var(--bg);
+    border: 1px solid var(--surface2);
+    color: var(--text-dim);
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 400;
+}
+
+.mode-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: white;
+    font-weight: 600;
+}
