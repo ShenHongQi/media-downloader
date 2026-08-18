@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#1a1a2e">
+    <title>Media Downloader</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Media Downloader</h1>
+            <button class="settings-btn" onclick="toggleSettings()">⚙</button>
+        </header>
+
+        <div id="settingsPanel" class="settings-panel hidden">
+            <label>服务器地址</label>
+            <input type="text" id="serverUrl" placeholder="http://192.168.1.100:8000">
+            <button onclick="saveSettings()">保存</button>
+            <p class="hint">填写你部署后端服务的地址（含端口号）</p>
+        </div>
+
+        <main>
+            <div class="input-section">
+                <textarea id="urlInput" placeholder="粘贴分享链接（支持抖音、B站、小红书、快手、TikTok、Instagram）"></textarea>
+                <button id="parseBtn" onclick="handleParse()">解析</button>
+            </div>
+
+            <div id="loading" class="loading hidden">
+                <div class="spinner"></div>
+                <span>解析中...</span>
+            </div>
+
+            <div id="results" class="results"></div>
+        </main>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>

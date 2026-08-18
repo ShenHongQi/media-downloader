@@ -1,11 +1,33 @@
-const API_BASE = (() => {
-    // Dev mode: frontend on 8080, API on 8000
-    if (window.location.port === "8080" && window.location.hostname === "localhost") {
-        return "http://localhost:8000/api";
+// Server URL from settings or default
+function getApiBase() {
+    const saved = localStorage.getItem("serverUrl");
+    if (saved) return saved.replace(/\/$/, "") + "/api";
+    return null;
+}
+
+let API_BASE = getApiBase();
+
+function toggleSettings() {
+    const panel = document.getElementById("settingsPanel");
+    panel.classList.toggle("hidden");
+    if (!panel.classList.contains("hidden")) {
+        document.getElementById("serverUrl").value =
+            localStorage.getItem("serverUrl") || "";
     }
-    // Standalone exe / Docker: same origin
-    return window.location.origin + "/api";
-})();
+}
+
+function saveSettings() {
+    const url = document.getElementById("serverUrl").value.trim();
+    if (!url) {
+        localStorage.removeItem("serverUrl");
+        API_BASE = null;
+    } else {
+        localStorage.setItem("serverUrl", url);
+        API_BASE = url.replace(/\/$/, "") + "/api";
+    }
+    document.getElementById("settingsPanel").classList.add("hidden");
+    alert("已保存");
+}
 
 function extractUrls(text) {
     const urlRegex = /https?:\/\/[^\s<>"']+/g;
@@ -13,6 +35,12 @@ function extractUrls(text) {
 }
 
 async function handleParse() {
+    if (!API_BASE) {
+        toggleSettings();
+        alert("请先配置服务器地址");
+        return;
+    }
+
     const input = document.getElementById("urlInput").value.trim();
     if (!input) return;
 
@@ -40,7 +68,7 @@ async function handleParse() {
         const data = await resp.json();
         renderResults(data.results, data.errors);
     } catch (e) {
-        results.innerHTML = `<div class="error-card">请求失败: ${e.message}</div>`;
+        results.innerHTML = `<div class="error-card">请求失败: ${e.message}<br>请检查服务器地址是否正确</div>`;
     } finally {
         btn.disabled = false;
         loading.classList.add("hidden");
@@ -66,12 +94,6 @@ function renderResults(resultList, errors) {
 function createCard(result) {
     const card = document.createElement("div");
     card.className = "card";
-
-    const typeLabel = {
-        video: "视频",
-        image: "图片",
-        album: "图集",
-    };
 
     card.innerHTML = `
         <div class="card-header">
@@ -138,9 +160,13 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-// Allow Ctrl+Enter / Cmd+Enter to submit
 document.getElementById("urlInput").addEventListener("keydown", (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
         handleParse();
     }
 });
+
+// Show settings on first launch if no server configured
+if (!API_BASE) {
+    setTimeout(() => toggleSettings(), 500);
+}

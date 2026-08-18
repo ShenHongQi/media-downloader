@@ -1,7 +1,10 @@
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.api import download, parse
 from app.parsers.registry import get_all_parsers
@@ -40,3 +43,9 @@ async def list_platforms():
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
+
+
+# Serve frontend static files (for standalone exe mode)
+_frontend_dir = Path(__file__).parent.parent.parent / "frontend"
+if _frontend_dir.is_dir():
+    app.mount("/", StaticFiles(directory=str(_frontend_dir), html=True), name="static")
