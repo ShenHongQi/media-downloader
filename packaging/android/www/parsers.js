@@ -257,37 +257,75 @@ class XiaohongshuParser {
 
         const ID = "[A-Za-z0-9_-]{16,32}";
         let m = pageUrl.match(new RegExp(`(?:explore|discovery/item|item|notes?)/(${ID})`));
-        let html = "";
+        let stubHtml = "";
         if (!m) {
             // resolveRedirect may not follow JS-redirect stubs; fetch the stub HTML
             const r = await httpGet(pageUrl, { headers: { "User-Agent": MOBILE_UA } });
-            html = typeof r.data === "string" ? r.data : (r.data ? JSON.stringify(r.data) : "");
-            m = html.match(new RegExp(`xiaohongshu\\.com/(?:explore|discovery/item)/(${ID})`));
-            if (!m) m = html.match(new RegExp(`"noteId"\\s*[:=]\\s*"(${ID})"`));
+            stubHtml = typeof r.data === "string" ? r.data : (r.data ? JSON.stringify(r.data) : "");
+            m = stubHtml.match(new RegExp(`xiaohongshu\\.com/(?:explore|discovery/item)/(${ID})`));
+            if (!m) m = stubHtml.match(new RegExp(`"noteId"\\s*[:=]\\s*"(${ID})"`));
         }
         if (!m) {
             throw new Error("无法提取小红书笔记 ID (url=" + pageUrl.slice(0, 80) + ")");
         }
         const noteId = m[1];
 
-        // __INITIAL_STATE__: prefer the html we may already have; else fetch explore page.
-        let stateHtml = html;
-        let stateMatch = stateHtml.match(/window\.__INITIAL_STATE__\s*=\s*(.+?)<\/script>/);
-        if (!stateMatch) {
-            const r2 = await httpGet(`https://www.xiaohongshu.com/explore/${noteId}`, {
-                headers: { "User-Agent": MOBILE_UA },
-            });
-            stateHtml = typeof r2.data === "string" ? r2.data : (r2.data ? JSON.stringify(r2.data) : "");
-            stateMatch = stateHtml.match(/window\.__INITIAL_STATE__\s*=\s*(.+?)<\/script>/);
-        }
+        // Fetch the note page using the FULL token-bearing URL (pageUrl) — the
+        // xsec_token in it is what makes Xiaohongshu inject the note data into
+        // __INITIAL_STATE__. Rebuilding explore/{noteId} (no token) returns an
+        // empty skeleton. Fall back to explore/{noteId} only if pageUrl isn't xhs.
+        const fetchUrl = pageUrl.includes("xiaohongshu.com")
+            ? pageUrl
+            : `https://www.xiaohongshu.com/explore/${noteId}`;
+        const r = await httpGet(fetchUrl, { headers: { "User-Agent": MOBILE_UA } });
+        const html = typeof r.data === "string" ? r.data : (r.data ? JSON.stringify(r.data) : "");
+
+        const stateMatch = html.match(/window\.__INITIAL_STATE__\s*=\s*(.+?)<\/script>/);
         if (!stateMatch) throw new Error("小红书页面解析失败");
 
         const raw = stateMatch[1].replace(/undefined/g, "null");
         const state = JSON.parse(raw);
-        const noteMap = state.note?.noteDetailMap || {};
-        const noteData = Object.values(noteMap)[0]?.note;
-        if (!noteData) throw new Error("无法获取笔记内容");
 
+        // Structured path
+        const noteMap = state.note?.noteDetailMap || {};
+        let noteData = Object.values(noteMap)[0]?.note;
+
+        // Fallback: regex-extract media from the raw state JSON if structured note missing
+        if (!noteData) {
+            const videoUrlMatch = raw.match(/"masterUrl"\s*:\s*"(https?:[^"]+)"/);
+            const imageUrls = [...new Set(
+                [...raw.matchAll(/"urlDefault"\s*:\s*"(https?:[^"]+)"/g)].map((x) => x[1])
+            )];
+            const titleMatch = raw.match(/"title"\s*:\s*"([^"]+)"/);
+            const descMatch = raw.match(/"desc"\s*:\s*"([^"]*)"/);
+            const nickMatch = raw.match(/"nickname"\s*:\s*"([^"]+)"/);
+
+            if (videoUrlMatch) {
+                return {
+                    platform: "xiaohongshu",
+                    media_type: "video",
+                    title: titleMatch ? titleMatch[1] : (descMatch ? descMatch[1] : ""),
+                    author: nickMatch ? nickMatch[1] : "",
+                    cover: imageUrls[0] || "",
+                    items: [{ url: videoUrlMatch[1] }],
+                    original_url: url,
+                };
+            }
+            if (imageUrls.length > 0) {
+                return {
+                    platform: "xiaohongshu",
+                    media_type: imageUrls.length > 1 ? "album" : "image",
+                    title: titleMatch ? titleMatch[1] : (descMatch ? descMatch[1] : ""),
+                    author: nickMatch ? nickMatch[1] : "",
+                    cover: imageUrls[0],
+                    items: imageUrls.map((u) => ({ url: u })),
+                    original_url: url,
+                };
+            }
+            throw new Error("无法获取笔记内容 (noteDetailMap keys=" + Object.keys(noteMap).join(",") + ")");
+        }
+
+        // Structured result below (noteData present)
         if (noteData.type === "video") {
             const video = noteData.video || {};
             const streams = video.media?.stream?.h264 || [];
