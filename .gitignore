@@ -9,3 +9,6 @@ build/
 .idea/
 .vscode/
 .DS_Store
+packaging/android/node_modules/
+packaging/android/android/.gradle/
+packaging/android/android/app/build/
