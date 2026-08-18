@@ -418,3 +418,49 @@ header {
     color: white;
     font-weight: 600;
 }
+
+/* Download buttons (native <button>, not <a>) */
+.card-actions button.dl-btn {
+    padding: 8px 14px;
+    background: var(--surface2);
+    color: var(--text);
+    border: none;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.card-actions button.dl-btn:hover {
+    background: var(--accent);
+}
+
+.card-actions button.dl-btn:disabled {
+    opacity: 0.6;
+}
+
+/* Image preview clickable */
+.media-preview img {
+    cursor: pointer;
+}
+
+/* Lightbox */
+.lightbox {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.92);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    padding: 20px;
+}
+
+.lightbox.hidden {
+    display: none;
+}
+
+.lightbox img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+}
