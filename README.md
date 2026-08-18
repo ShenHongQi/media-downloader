@@ -15,11 +15,65 @@
 
 > TikTok 和 Instagram 需要能访问对应站点的网络环境。
 
+---
+
 ## 快速开始
 
-### Docker 部署（推荐，全平台通用）
+提供多种使用方式，选择最适合你的：
 
-前提：安装 [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+### 方式一：Windows 安装包（双击即用）
+
+**完全独立，不需要安装 Python、Docker 或任何依赖。**
+
+在 Windows 电脑上操作：
+
+```powershell
+# 1. 拉取代码（或解压 zip 包）
+git clone https://github.com/ShenHongQi/media-downloader.git
+cd media-downloader
+
+# 2. 一键构建
+packaging\windows\build.bat
+```
+
+构建完成后得到 `packaging/windows/dist/MediaDownloader.exe`，双击运行即可。
+
+**前置条件：** Windows 10/11 + Python 3.12+（安装时勾选 "Add to PATH"）
+
+### 方式二：Android APK（安装即用）
+
+**内置解析引擎，无需连接服务器。**
+
+在有 Android Studio 的电脑上构建：
+
+```bash
+cd packaging/android
+
+# 1. 安装依赖
+npm install
+
+# 2. 初始化 Android 项目（首次）
+npx cap add android
+
+# 3. 同步代码
+npx cap sync android
+
+# 4. 构建 APK
+cd android
+./gradlew assembleDebug
+```
+
+APK 输出: `android/app/build/outputs/apk/debug/app-debug.apk`
+
+发送到手机安装即可使用。
+
+**前置条件：** Node.js 18+ / Android Studio / JDK 17
+
+**Android App 支持两种模式：**
+- **本地解析（默认）**：无需服务器，App 直接解析
+- **远程服务器**：点右上角 ⚙ 切换，填入后端地址
+
+### 方式三：Docker 部署（推荐服务器/NAS）
 
 ```bash
 git clone https://github.com/ShenHongQi/media-downloader.git
@@ -31,71 +85,64 @@ docker compose up -d
 
 停止服务：`docker compose down`
 
-### macOS / Linux 本地运行
+### 方式四：macOS / Linux 本地运行
 
 ```bash
-# 1. 安装依赖
 cd backend
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# 2. 启动 API 服务
+# 启动 API
 uvicorn app.main:app --reload --port 8000
 
-# 3. 启动前端（另开终端）
+# 另开终端，启动前端
 cd frontend
 python -m http.server 8080
 ```
 
-打开浏览器访问 **http://localhost:8080**
+访问 **http://localhost:8080**
 
-### Windows 本地运行
-
-前提：安装 [Python 3.12+](https://www.python.org/downloads/)（安装时勾选 "Add to PATH"）
+### 方式五：Windows 本地运行（不打包）
 
 ```powershell
-# 拉取代码
-git clone https://github.com/ShenHongQi/media-downloader.git
-cd media-downloader\backend
-
-# 创建虚拟环境并安装依赖
+cd backend
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-
-# 启动 API
 uvicorn app.main:app --port 8000
 ```
 
-另开一个终端启动前端：
+另开终端：
 
 ```powershell
-cd media-downloader\frontend
+cd frontend
 python -m http.server 8080
 ```
 
-打开浏览器访问 **http://localhost:8080**
+访问 **http://localhost:8080**
+
+---
 
 ## 使用方法
 
-### Web 界面
+### Web / 桌面端
 
-1. 打开浏览器访问前端页面
-2. 在输入框粘贴分享链接（支持直接粘贴含链接的分享文本，会自动提取 URL）
-3. 点击 **解析** 按钮（或按 `Ctrl+Enter` / `Cmd+Enter`）
-4. 等待解析完成，页面会展示：
-   - 平台标识
-   - 标题和作者
-   - 封面/图片预览
-   - 下载按钮
-5. 点击 **下载** 按钮即可保存无水印资源
+1. 打开页面，在输入框粘贴分享链接（支持直接粘贴含链接的分享文本，自动提取 URL）
+2. 点击 **解析**（或 `Ctrl+Enter` / `Cmd+Enter`）
+3. 等待解析完成，页面展示封面预览、标题、作者
+4. 点击 **下载** 保存无水印资源
 
 支持一次粘贴多个链接（每行一个），批量解析。
 
-### API 直接调用
+### Android App
 
-**解析链接：**
+1. 从抖音/B站/小红书等 App 复制分享链接
+2. 打开 Media Downloader，粘贴链接
+3. 点击「解析」
+4. 点击「下载」保存
+
+### API 直接调用
 
 ```bash
 # 单个链接
@@ -105,68 +152,52 @@ curl "http://localhost:8000/api/parse?url=https://v.douyin.com/xxx/"
 curl -X POST http://localhost:8000/api/parse \
   -H "Content-Type: application/json" \
   -d '{"urls": ["https://v.douyin.com/xxx/", "https://www.bilibili.com/video/BVxxx"]}'
-```
 
-**下载资源（通过代理中转）：**
-
-```bash
+# 代理下载
 curl -o video.mp4 "http://localhost:8000/api/download?url=<资源URL>&platform=douyin&filename=video.mp4"
-```
 
-**查看支持的平台：**
-
-```bash
+# 查看支持的平台
 curl http://localhost:8000/api/platforms
 ```
 
-### iOS 快捷指令（可选）
-
-可创建 iOS 快捷指令实现"分享到快捷指令直接下载"：
-
-1. 新建快捷指令
-2. 添加"获取URL内容"操作，方法 POST，URL 填 `http://<你的服务器IP>:8000/api/parse`
-3. Body 为 JSON: `{"urls": ["<快捷指令输入>"]}`
-4. 解析返回的 JSON，提取 `items[0].url`
-5. 下载该 URL 并保存到相册
+---
 
 ## 项目结构
 
 ```
 media-downloader/
-├── backend/
+├── backend/                  # Python 后端（FastAPI）
 │   ├── app/
-│   │   ├── main.py           # FastAPI 入口
-│   │   ├── config.py         # 配置
+│   │   ├── main.py           # 入口
 │   │   ├── models.py         # 数据模型
-│   │   ├── api/              # API 路由
-│   │   │   ├── parse.py      # 解析接口
-│   │   │   └── download.py   # 下载代理
+│   │   ├── api/              # API 路由（解析 + 下载代理）
 │   │   ├── parsers/          # 各平台解析器（插件式）
-│   │   │   ├── base.py       # 基类
-│   │   │   ├── registry.py   # 自动注册
-│   │   │   ├── douyin.py
-│   │   │   ├── bilibili.py
-│   │   │   ├── xiaohongshu.py
-│   │   │   ├── kuaishou.py
-│   │   │   ├── tiktok.py
-│   │   │   └── instagram.py
-│   │   └── utils/            # 工具函数
+│   │   └── utils/            # HTTP 客户端、短链解析
 │   └── requirements.txt
-├── frontend/                  # 前端静态页面
-├── nginx/                     # Nginx 配置
+├── frontend/                  # Web 前端（原生 HTML/CSS/JS）
+├── packaging/
+│   ├── windows/              # Windows exe 打包
+│   │   ├── build.bat         # 一键构建脚本
+│   │   ├── build.spec        # PyInstaller 配置
+│   │   └── app_entry.py      # 桌面入口（pywebview）
+│   └── android/              # Android APK 打包
+│       ├── www/              # 前端 + JS 解析器
+│       │   ├── parsers.js    # 6 平台解析器（JS 版）
+│       │   └── ...
+│       ├── capacitor.config.json
+│       └── package.json
+├── nginx/                     # Nginx 配置（Docker 用）
 ├── Dockerfile
 └── docker-compose.yml
 ```
 
 ## 添加新平台
 
-1. 在 `backend/app/parsers/` 下新建 `xxx.py`
-2. 继承 `BaseParser`，实现 `platform_name`、`url_patterns` 和 `parse()` 方法
-3. 在 `models.py` 的 `Platform` 枚举中添加新平台
-4. 重启服务，新解析器会被自动注册
+**后端（Python）：**
+
+在 `backend/app/parsers/` 下新建 `.py` 文件，继承 `BaseParser`：
 
 ```python
-# backend/app/parsers/xxx.py
 import re
 from app.models import MediaItem, MediaResult, MediaType, Platform
 from app.parsers.base import BaseParser
@@ -180,20 +211,26 @@ class XxxParser(BaseParser):
         ...
 ```
 
+重启服务自动注册，无需其他配置。
+
+**Android（JavaScript）：**
+
+在 `packaging/android/www/parsers.js` 中添加新的 Parser 类，并在 `ParserRegistry` 构造函数中注册。
+
 ## 配置
 
-通过环境变量或 `.env` 文件配置：
+通过环境变量或 `.env` 文件配置（后端）：
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `HTTP_TIMEOUT` | 30 | HTTP 请求超时秒数 |
 | `DOWNLOAD_PROXY` | 空 | 代理地址（用于 TikTok/Instagram） |
-| `REDIS_URL` | 空 | Redis 地址（可选，用于缓存） |
+| `REDIS_URL` | 空 | Redis 地址（可选缓存） |
 | `CACHE_TTL` | 3600 | 缓存过期时间（秒） |
 
 ## 注意事项
 
 - 本工具仅供个人学习研究使用
-- 各平台接口可能随时变动，如解析失败请提 issue 或自行更新解析逻辑
-- TikTok/Instagram 需要能访问对应站点的网络环境（可通过 `DOWNLOAD_PROXY` 配置代理）
-- B站高清视频可能为 DASH 格式（音视频分离），当前返回的是合并后的低画质 MP4 流
+- 各平台接口可能随时变动，如解析失败请更新解析逻辑
+- TikTok/Instagram 需要可访问对应站点的网络环境
+- B站高清视频为 DASH 格式（音视频分离），当前返回合并后的 MP4 流
