@@ -211,46 +211,40 @@ function renderActions(result) {
 }
 
 // --- Download via native plugins ---
-function getBase64FromUrl(url) {
+// Media.savePhoto/saveVideo accept `path`: a web URL, base64 data URI, or local file path.
+function getBase64DataUri(url, isVideo) {
+    const mime = isVideo ? "video/mp4" : "image/jpeg";
     return fetch(url)
         .then((r) => r.blob())
         .then(
             (blob) =>
                 new Promise((resolve, reject) => {
                     const reader = new FileReader();
-                    reader.onloadend = () => resolve(reader.result.split(",")[1]);
+                    reader.onloadend = () => resolve(reader.result.replace(`data:application/octet-stream`, `data:${mime}`));
                     reader.onerror = reject;
                     reader.readAsDataURL(blob);
                 })
-        );
+        )
+        .then((dataUri) => dataUri.startsWith("data:") ? dataUri : `data:${mime};base64,${dataUri}`);
 }
 
 async function downloadMedia(url, filename, type, btn) {
-    if (!Filesystem || !Media) {
+    if (!Media) {
         alert("下载插件未就绪，请用远程模式（需后端服务器代理下载）");
         return;
     }
+    const isVideo = type === "video";
     const original = btn ? btn.textContent : "";
     if (btn) {
         btn.disabled = true;
         btn.textContent = "下载中...";
     }
     try {
-        const base64 = await getBase64FromUrl(url);
-        if (type === "video") {
-            const tempName = `md_${Date.now()}.mp4`;
-            await Filesystem.writeFile({
-                path: tempName,
-                data: base64,
-                directory: Filesystem.Directory.Cache,
-            });
-            const uri = await Filesystem.getUri({
-                path: tempName,
-                directory: Filesystem.Directory.Cache,
-            });
-            await Media.saveVideo({ path: uri.uri });
+        const dataUri = await getBase64DataUri(url, isVideo);
+        if (isVideo) {
+            await Media.saveVideo({ path: dataUri });
         } else {
-            await Media.savePhoto({ base64Data: base64 });
+            await Media.savePhoto({ path: dataUri });
         }
         if (btn) btn.textContent = "✓ 已保存到相册";
         setTimeout(() => { if (btn) { btn.textContent = original; btn.disabled = false; } }, 2000);
@@ -261,36 +255,29 @@ async function downloadMedia(url, filename, type, btn) {
 }
 
 async function downloadAll(result) {
-    if (!Filesystem || !Media) {
+    if (!Media) {
         alert("下载插件未就绪");
         return;
     }
     let ok = 0;
+    let fail = 0;
     for (let i = 0; i < result.items.length; i++) {
         const item = result.items[i];
-        const ext = item.url.includes(".mp4") ? "mp4" : "jpg";
-        const filename = `${result.platform}_${i + 1}.${ext}`;
+        const isVideo = item.url.includes(".mp4") || result.media_type === "video";
         try {
-            const base64 = await getBase64FromUrl(item.url);
-            if (result.media_type === "video" || ext === "mp4") {
-                const tempName = `md_${Date.now()}_${i}.mp4`;
-                await Filesystem.writeFile({
-                    path: tempName, data: base64,
-                    directory: Filesystem.Directory.Cache,
-                });
-                const uri = await Filesystem.getUri({
-                    path: tempName, directory: Filesystem.Directory.Cache,
-                });
-                await Media.saveVideo({ path: uri.uri });
+            const dataUri = await getBase64DataUri(item.url, isVideo);
+            if (isVideo) {
+                await Media.saveVideo({ path: dataUri });
             } else {
-                await Media.savePhoto({ base64Data: base64 });
+                await Media.savePhoto({ path: dataUri });
             }
             ok++;
         } catch (e) {
             console.error("item", i, e);
+            fail++;
         }
     }
-    alert(`已保存 ${ok}/${result.items.length} 个到相册`);
+    alert(`已保存 ${ok} 个${fail ? `，失败 ${fail} 个` : ""}到相册`);
 }
 
 // --- Lightbox ---
