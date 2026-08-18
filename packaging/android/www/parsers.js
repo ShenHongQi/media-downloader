@@ -290,39 +290,114 @@ class XiaohongshuParser {
         const noteMap = state.note?.noteDetailMap || {};
         let noteData = Object.values(noteMap)[0]?.note;
 
-        // Fallback: regex-extract media from the raw state JSON if structured note missing
+        // If structured note missing, try multiple fallback data sources.
         if (!noteData) {
+            // Source 2: regex on the __INITIAL_STATE__ raw JSON
             const videoUrlMatch = raw.match(/"masterUrl"\s*:\s*"(https?:[^"]+)"/);
-            const imageUrls = [...new Set(
+            const imageUrlsState = [...new Set(
                 [...raw.matchAll(/"urlDefault"\s*:\s*"(https?:[^"]+)"/g)].map((x) => x[1])
             )];
             const titleMatch = raw.match(/"title"\s*:\s*"([^"]+)"/);
             const descMatch = raw.match(/"desc"\s*:\s*"([^"]*)"/);
             const nickMatch = raw.match(/"nickname"\s*:\s*"([^"]+)"/);
+            const title = titleMatch ? titleMatch[1] : (descMatch ? descMatch[1] : "");
+            const author = nickMatch ? nickMatch[1] : "";
 
             if (videoUrlMatch) {
                 return {
                     platform: "xiaohongshu",
                     media_type: "video",
-                    title: titleMatch ? titleMatch[1] : (descMatch ? descMatch[1] : ""),
-                    author: nickMatch ? nickMatch[1] : "",
-                    cover: imageUrls[0] || "",
+                    title, author,
+                    cover: imageUrlsState[0] || "",
                     items: [{ url: videoUrlMatch[1] }],
                     original_url: url,
                 };
             }
-            if (imageUrls.length > 0) {
+            if (imageUrlsState.length > 0) {
                 return {
                     platform: "xiaohongshu",
-                    media_type: imageUrls.length > 1 ? "album" : "image",
-                    title: titleMatch ? titleMatch[1] : (descMatch ? descMatch[1] : ""),
-                    author: nickMatch ? nickMatch[1] : "",
-                    cover: imageUrls[0],
-                    items: imageUrls.map((u) => ({ url: u })),
+                    media_type: imageUrlsState.length > 1 ? "album" : "image",
+                    title, author,
+                    cover: imageUrlsState[0],
+                    items: imageUrlsState.map((u) => ({ url: u })),
                     original_url: url,
                 };
             }
-            throw new Error("无法获取笔记内容 (noteDetailMap keys=" + Object.keys(noteMap).join(",") + ")");
+
+            // Source 3: og / meta tags
+            const ogVideo = (html.match(/<meta[^>]+property=["']og:video(?::url|:secure_url)?["'][^>]*content=["']([^"']+)["']/i) || [])[1]
+                || (html.match(/<meta[^>]+property=["']og:video[^"']*["'][^>]*content=["']([^"']+)["']/i) || [])[1];
+            const ogImages = [...html.matchAll(/<meta[^>]+property=["']og:image["'][^>]*content=["']([^"']+)["']/gi)].map((x) => x[1]);
+            const ogTitle = (html.match(/<meta[^>]+property=["']og:title["'][^>]*content=["']([^"']+)["']/i) || [])[1];
+            const ogDesc = (html.match(/<meta[^>]+property=["']og:description["'][^>]*content=["']([^"']+)["']/i) || [])[1];
+            const ogAuthor = (html.match(/<meta[^>]+(?:property|name)=["']og:article:author["'][^>]*content=["']([^"']+)["']/i)
+                || html.match(/<meta[^>]+name=["']author["'][^>]*content=["']([^"']+)["']/i) || [])[1];
+
+            if (ogVideo) {
+                return {
+                    platform: "xiaohongshu",
+                    media_type: "video",
+                    title: ogTitle || ogDesc || "",
+                    author: ogAuthor || "",
+                    cover: ogImages[0] || "",
+                    items: [{ url: ogVideo }],
+                    original_url: url,
+                };
+            }
+            if (ogImages.length > 0) {
+                return {
+                    platform: "xiaohongshu",
+                    media_type: ogImages.length > 1 ? "album" : "image",
+                    title: ogTitle || ogDesc || "",
+                    author: ogAuthor || "",
+                    cover: ogImages[0],
+                    items: ogImages.map((u) => ({ url: u })),
+                    original_url: url,
+                };
+            }
+
+            // Source 4: whole-HTML xiaohongshu CDN media regex
+            const cdnImg = [...new Set(
+                [...html.matchAll(/https?:\/\/(?:sns-img[^.]*\.xhscdn\.com|ci\.xiaohongshu\.com|sns-webpic[^.]*\.xhscdn\.com)\/[^\s"'<>]+\.(?:jpg|jpeg|png|webp)(?:\?[^\s"'<>]*)?/gi)]
+                    .map((x) => x[0])
+            )];
+            const cdnVideo = [...new Set(
+                [...html.matchAll(/https?:\/\/[^\s"'<>]+\.mp4[^\s"'<>]*/gi)]
+                    .map((x) => x[0])
+                    .filter((u) => /xhs|xiaohongshu/.test(u))
+            )];
+
+            if (cdnVideo.length > 0) {
+                return {
+                    platform: "xiaohongshu",
+                    media_type: "video",
+                    title: ogTitle || ogDesc || "",
+                    author: ogAuthor || "",
+                    cover: cdnImg[0] || "",
+                    items: [{ url: cdnVideo[0] }],
+                    original_url: url,
+                };
+            }
+            if (cdnImg.length > 0) {
+                return {
+                    platform: "xiaohongshu",
+                    media_type: cdnImg.length > 1 ? "album" : "image",
+                    title: ogTitle || ogDesc || "",
+                    author: ogAuthor || "",
+                    cover: cdnImg[0],
+                    items: cdnImg.map((u) => ({ url: u })),
+                    original_url: url,
+                };
+            }
+
+            // Diagnostics
+            throw new Error(
+                "无法获取笔记内容 (pageUrl=" + pageUrl.slice(0, 60) +
+                ", htmlLen=" + html.length +
+                ", noteMapKeys=" + Object.keys(noteMap).join(",") +
+                ", ogImg=" + ogImages.length + ", ogVideo=" + (ogVideo ? "y" : "n") +
+                ")"
+            );
         }
 
         // Structured result below (noteData present)

@@ -1,47 +1,52 @@
-# 修复小红书笔记内容获取（带 xsec_token + 正则兜底）
+# 小红书：多数据源解析 + 诊断
 
 ## Context
 
-小红书报"无法获取笔记内容"——noteId 提取已成功，但 `__INITIAL_STATE__.note.noteDetailMap` 为空。
+小红书报 `无法获取笔记内容 (noteDetailMap keys=)`：带 token 的 pageUrl 请求回来的页面，`__INITIAL_STATE__.note.noteDetailMap` 是空对象，raw JSON 里也没有 `masterUrl`/`urlDefault`。说明小红书 web 现在是 CSR 为主，note 详情靠 JS 异步从签名 API 加载，SSR 不注入媒体数据。
 
-根因：当前用重建的 `https://www.xiaohongshu.com/explore/{noteId}` 请求页面，**丢失了 xsec_token 访问令牌**。小红书对无 token 的 explore 请求返回空 noteDetailMap 骨架页。而短链重定向后的真实 URL `xiaohongshu.com/discovery/item/{id}?xsec_token=...&xsec_source=...` 才带令牌，用它请求才能拿到 note 数据。
-
-抖音不受影响（走 iesdouyin API，独立路径），本次只改 `XiaohongshuParser.parse`，不碰 `resolveRedirect`。
+我无法在 Mac 上真机测试（公司网络拦截 xhslink），需要一次覆盖尽可能多的数据源，失败时带诊断信息方便定位。不影响抖音/B站（只改 `XiaohongshuParser.parse`）。
 
 ## 方案（`packaging/android/www/parsers.js` 的 `XiaohongshuParser.parse`）
 
-### 1. 用含 token 的真实 URL 请求页面
+拿到 HTML 后，按优先级尝试多数据源，第一个成功即返回：
 
-- `resolveRedirect(xhslink)` 得到 `pageUrl`（含 `?xsec_token=...`）
-- 提取 noteId 后，**用 pageUrl 本身**（完整含 token）`httpGet` 拿 HTML，而不是重建 `explore/{noteId}` 丢 token
-- 仅当 pageUrl 不是 xiaohongshu.com（极端情况）才回退到 explore/{noteId}
+### 数据源 1：`__INITIAL_STATE__` 结构化（现有）
+`noteDetailMap` → `note` → imageList/video。保留。
 
-### 2. 结构化解析 + 正则兜底
+### 数据源 2：`__INITIAL_STATE__` raw 正则（现有）
+`"masterUrl"`, `"urlDefault"`, `"title"`, `"nickname"`。保留。
 
-拿到 `__INITIAL_STATE__` 后：
-- 先按原结构取 `noteDetailMap` → `note`
-- 若 `note` 为空（noteDetailMap 空对象），从 `__INITIAL_STATE__` 的 raw JSON 字符串里**正则兜底提取**媒体与元信息：
-  - 视频：`"masterUrl"\s*:\s*"(https?:[^"]+)"`（取第一个）→ media_type=video
-  - 图片：`"urlDefault"\s*:\s*"(https?:[^"]+)"`（去重后全部）→ image/album
-  - 标题：`"title"\s*:\s*"([^"]+)"` 或 `"desc"\s*:\s*"([^"]+)"`
-  - 作者：`"nickname"\s*:\s*"([^"]+)"`
-  - 封面：第一张图片 urlDefault
-- 兜底也取不到才报错（附 noteDetailMap keys 便于诊断）
+### 数据源 3：og / meta 标签
+从 HTML head 提取：
+- `og:image` → 图片（封面，图集可能只首张）
+- `og:video` / `og:video:url` / `og:video:secure_url` → 视频直链
+- `og:title` → 标题
+- `og:description` → 描述
+- 用正则 `<meta[^>]+(?:property|name)=["']og:(\w+)["'][^>]*content=["']([^"']+)["']`，以及 video 专门的 `<meta[^>]+property=["']og:video[^"']*["'][^>]*content=["']([^"']+)["']`
 
-这样无论 SSR 注入到 noteDetailMap 还是其他位置，都能拿到媒体。
+### 数据源 4：全 HTML 小红书 CDN 媒体正则
+在**整个 HTML**（不限于 `__INITIAL_STATE__`）里找小红书 CDN 媒体直链：
+- 图片：`https?://(?:sns-img[^.]*\.xhscdn\.com|ci\.xiaohongshu\.com|sns-webpic[^.]*\.xhscdn\.com)/[^\s"'<>]+\.(?:jpg|jpeg|png|webp)(?:\?[^\s"'<>]*)?`，去重
+- 视频：`https?://[^\s"'<>]+\.mp4[^\s"'<>]*`，过滤含 xhscdn 或 xiaohongshu 的
 
-### 3. 不动抖音/B站
+若数据源 1-4 都拿不到媒体，抛出带诊断的错误：
+```
+无法获取笔记内容 (pageUrl=..., htmlLen=..., hasState=true/false, hasOgImage=true/false, ogVideo=...)
+```
 
-`resolveRedirect` 保持当前（读 Location header）版本，抖音 `_extractId`、B站 `_extractBvid` 不变。只重写 `XiaohongshuParser.parse` 内部。
+这样：
+- 若 SSR 注入了数据 → 数据源 1/2 命中
+- 若有 og 标签 → 数据源 3 命中（至少封面图 + 标题）
+- 若页面 HTML 直接含 CDN 链接 → 数据源 4 命中
+- 都失败 → 诊断信息让我精准定位（很可能需要走签名 API，到时据诊断决定）
 
 ## 涉及文件
 
-- 修改：`packaging/android/www/parsers.js`（仅 `XiaohongshuParser.parse`）
+- 修改：`packaging/android/www/parsers.js`（仅 `XiaohongshuParser.parse`，扩展数据源与诊断）
 
 ## 验证
 
 1. `npx cap copy android && cd android && ./gradlew assembleDebug`
 2. 安装新 APK
-3. **小红书** `https://xhslink.cn/o/72Q1GlvETWE` → 解析出图文/视频并可下载到相册
-4. **抖音**图文 → 仍正常（回归，不受影响）
-5. **B站** → 仍正常（回归）
+3. 小红书 `https://xhslink.cn/o/72Q1GlvETWE` → 若解析成功则下载；若仍失败，错误信息带 pageUrl/htmlLen/hasOgImage 等，把完整错误贴我，据此决定是否需实现签名 API
+4. 抖音、B站回归不受影响
