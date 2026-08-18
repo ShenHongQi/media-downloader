@@ -80,13 +80,30 @@ async function httpPost(url, body, options = {}) {
 }
 
 async function resolveRedirect(url) {
-    // CapacitorHttp patches fetch -> native, follows redirects, no CORS.
-    try {
-        const resp = await fetch(url, { redirect: "follow" });
+    // Use the CapacitorHttp plugin API directly and read the real Location header
+    // from the native response. (Patched fetch wraps the URL as an interceptor and
+    // its resp.url is unusable.)
+    if (window.Capacitor && window.Capacitor.Plugins.CapacitorHttp) {
+        const resp = await window.Capacitor.Plugins.CapacitorHttp.get({
+            url,
+            headers: {
+                "User-Agent": MOBILE_UA,
+            },
+            disableRedirects: true,
+            readTimeout: 10000,
+            connectTimeout: 10000,
+        });
+        if ([301, 302, 303, 307, 308].includes(resp.status)) {
+            return resp.headers["Location"] || resp.headers["location"] || url;
+        }
         return resp.url || url;
-    } catch (e) {
-        return url;
     }
+
+    const resp = await fetch(url, { redirect: "manual" });
+    if (resp.type === "opaqueredirect" || [301, 302, 303, 307, 308].includes(resp.status)) {
+        return resp.headers.get("location") || url;
+    }
+    return resp.url || url;
 }
 
 // --- Parsers ---
@@ -233,31 +250,27 @@ class XiaohongshuParser {
     }
 
     async parse(url) {
-        // Use the CapacitorHttp plugin API (httpGet) — its native response gives the
-        // real final URL after redirects. (Patched fetch wraps the URL as an
-        // interceptor and resp.url becomes unusable.)
-        let finalUrl = url;
-        let html = "";
-        try {
-            const resp = await httpGet(url, { headers: { "User-Agent": MOBILE_UA } });
-            finalUrl = resp.url || url;
-            html = typeof resp.data === "string" ? resp.data : (resp.data ? JSON.stringify(resp.data) : "");
-        } catch (e) {
-            throw new Error("小红书请求失败: " + e.message);
-        }
+        // Resolve short link via Location header (native, reliable). Do NOT rely on
+        // httpGet's resp.url — it's the interceptor URL and unusable.
+        let pageUrl = url;
+        if (url.includes("xhslink")) pageUrl = await resolveRedirect(url);
 
-        // noteId may live in /explore/, /discovery/item/, /item/, or /note/ — charset is not strictly hex.
         const ID = "[A-Za-z0-9_-]{16,32}";
-        let m = finalUrl.match(new RegExp(`(?:explore|discovery/item|item|notes?)/(${ID})`));
-        if (!m) m = html.match(new RegExp(`xiaohongshu\\.com/(?:explore|discovery/item)/(${ID})`));
-        if (!m) m = html.match(new RegExp(`"noteId"\\s*[:=]\\s*"(${ID})"`));
-        if (!m) m = html.match(new RegExp(`note/(${ID})`));
+        let m = pageUrl.match(new RegExp(`(?:explore|discovery/item|item|notes?)/(${ID})`));
+        let html = "";
         if (!m) {
-            throw new Error("无法提取小红书笔记 ID (finalUrl=" + finalUrl.slice(0, 80) + ")");
+            // resolveRedirect may not follow JS-redirect stubs; fetch the stub HTML
+            const r = await httpGet(pageUrl, { headers: { "User-Agent": MOBILE_UA } });
+            html = typeof r.data === "string" ? r.data : (r.data ? JSON.stringify(r.data) : "");
+            m = html.match(new RegExp(`xiaohongshu\\.com/(?:explore|discovery/item)/(${ID})`));
+            if (!m) m = html.match(new RegExp(`"noteId"\\s*[:=]\\s*"(${ID})"`));
+        }
+        if (!m) {
+            throw new Error("无法提取小红书笔记 ID (url=" + pageUrl.slice(0, 80) + ")");
         }
         const noteId = m[1];
 
-        // Prefer the page we already fetched if it has the state; else fetch canonical explore page.
+        // __INITIAL_STATE__: prefer the html we may already have; else fetch explore page.
         let stateHtml = html;
         let stateMatch = stateHtml.match(/window\.__INITIAL_STATE__\s*=\s*(.+?)<\/script>/);
         if (!stateMatch) {
