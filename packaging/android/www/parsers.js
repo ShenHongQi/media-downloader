@@ -233,17 +233,15 @@ class XiaohongshuParser {
     }
 
     async parse(url) {
-        // Fetch the short link / full url once: follow redirects natively (no CORS),
-        // capture final URL + page HTML in one shot.
+        // Use the CapacitorHttp plugin API (httpGet) — its native response gives the
+        // real final URL after redirects. (Patched fetch wraps the URL as an
+        // interceptor and resp.url becomes unusable.)
         let finalUrl = url;
         let html = "";
         try {
-            const resp = await fetch(url, {
-                redirect: "follow",
-                headers: { "User-Agent": MOBILE_UA },
-            });
+            const resp = await httpGet(url, { headers: { "User-Agent": MOBILE_UA } });
             finalUrl = resp.url || url;
-            html = await resp.text();
+            html = typeof resp.data === "string" ? resp.data : (resp.data ? JSON.stringify(resp.data) : "");
         } catch (e) {
             throw new Error("小红书请求失败: " + e.message);
         }
@@ -266,7 +264,7 @@ class XiaohongshuParser {
             const r2 = await httpGet(`https://www.xiaohongshu.com/explore/${noteId}`, {
                 headers: { "User-Agent": MOBILE_UA },
             });
-            stateHtml = typeof r2.data === "string" ? r2.data : "";
+            stateHtml = typeof r2.data === "string" ? r2.data : (r2.data ? JSON.stringify(r2.data) : "");
             stateMatch = stateHtml.match(/window\.__INITIAL_STATE__\s*=\s*(.+?)<\/script>/);
         }
         if (!stateMatch) throw new Error("小红书页面解析失败");

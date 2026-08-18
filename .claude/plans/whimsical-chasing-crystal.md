@@ -1,60 +1,33 @@
-# 修复小红书 noteId 提取 + clipboard 粘贴 + 按钮布局
+# 修复小红书：改用 CapacitorHttp 插件 API 取真实 finalUrl
 
 ## Context
 
-三个待解决：
-1. **小红书仍报"无法提取小红书笔记 ID"**：fetch follow 成功了（否则会报"请求失败"），但 noteId 正则 `[a-f0-9]{8,}` 太严——小红书 noteId 是 24 位，可能含非 hex 字符，且落地 URL 形式多样。需放宽并从多处提取。
-2. **粘贴失败**："无法读取剪切板"。`navigator.clipboard.readText()` 在 Capacitor WebView 不可靠。改用 `@capacitor/clipboard` 原生插件。
-3. **按钮布局**：把粘贴/清除按钮做大，与"解析"按钮同行同级、等宽、同设计风格。
+小红书报错 `finalUrl=https://localhost/_capacitor_http_interceptor_?u=...`。
+
+根因：当前 `XiaohongshuParser.parse` 用的是被 CapacitorHttp patch 过的 `fetch()`。patched fetch 会把请求包装成 `https://localhost/_capacitor_http_interceptor_?u=<原url>` 形式，导致 `resp.url` 返回拦截器地址而非真实重定向后的 URL。因此从 finalUrl 提取 noteId 永远失败，HTML 兜底也没匹配上（xhslink 可能是 JS 跳转 stub）。
+
+抖音能成功是因为它走的是旧的 `resolveRedirect`（直接调 `CapacitorHttp.get` 读 Location header），不是 patched fetch。
 
 ## 方案
 
-### 1. 小红书 noteId 提取放宽（`packaging/android/www/parsers.js`）
+改回直接调用 `CapacitorHttp` 插件 API（已有的 `httpGet` helper），其 native 响应 `resp.url` 是跟随重定向后的真实地址、`resp.data` 是页面 HTML。
 
-`XiaohongshuParser.parse` 的提取改为多策略，字符集放宽为 `[A-Za-z0-9_-]`、长度 16~32：
-- 优先从 `finalUrl` 匹配：`/(?:explore|discovery\/item|item|notes?)\/([A-Za-z0-9_-]{16,32})/`
-- 其次从 HTML 找 `xiaohongshu.com/(explore|discovery/item)/([A-Za-z0-9_-]{16,32})`
-- 再从 HTML 找 `"noteId"\s*[:=]\s*"([A-Za-z0-9_-]{16,32})"` 或 `note\/([A-Za-z0-9_-]{16,32})`
-- 若都失败，把 `finalUrl` 片段附进错误信息方便诊断
+修改 `packaging/android/www/parsers.js` 的 `XiaohongshuParser.parse`：
+- 把 `fetch(url, {redirect:"follow", headers})` + `resp.url`/`resp.text()` 换成 `httpGet(url, { headers: { "User-Agent": MOBILE_UA } })`
+- `finalUrl = resp.url || url`，`html = typeof resp.data === "string" ? resp.data : (resp.data ? JSON.stringify(resp.data) : "")`
+- noteId 多策略提取（已放宽字符集）保持不变
+- 兜底请求 explore 页也用 `httpGet`
+- 错误信息附 finalUrl 便于诊断（已有）
 
-### 2. 安装 `@capacitor/clipboard` 用原生剪贴板
-
-- `npm install @capacitor/clipboard@6` + `npx cap sync android`
-- `app.js` 的 `pasteFromClipboard()` 改为：优先 `window.Capacitor.Plugins.Clipboard.read()`（返回 `{ value }`），失败再 fallback `navigator.clipboard.readText()`
-
-### 3. 按钮布局重构（`index.html` + `app.js` + `style.css`）
-
-**HTML**：把工具栏合并进输入区，做成一行三个等宽按钮，粘贴/清除互斥显示：
-```html
-<div class="action-row">
-    <button id="pasteBtn" class="action-btn" onclick="pasteFromClipboard()">📋 粘贴</button>
-    <button id="clearBtn" class="action-btn hidden" onclick="clearInput()">✕ 清除</button>
-    <button id="parseBtn" class="action-btn primary" onclick="handleParse()">解析</button>
-</div>
-```
-（textarea 在按钮行上方或下方，保持原有结构）
-
-**style.css**：
-- `.action-row` flex、gap
-- `.action-btn` 与原"解析"按钮同样式（padding 14px、border-radius 12px、字号 1rem），`flex:1` 等宽
-- `.action-btn.primary` 用 `--accent` 强调色（解析按钮）
-- 粘贴/清除用 `--surface2` 底色
-- `.hidden` 保持 `display:none`
-
-**app.js**：`toggleToolButtons()` 逻辑不变（有内容显示清除、隐藏粘贴；无内容反之）。按钮已用 `hidden` 类切换。
+`httpGet` 在 Capacitor 环境走 `window.Capacitor.Plugins.CapacitorHttp.get`（follow redirects，返回真实 url + data）；非 Capacitor 环境 fallback 到 fetch。
 
 ## 涉及文件
 
-- 修改：`packaging/android/www/parsers.js`
-- 修改：`packaging/android/www/index.html`
-- 修改：`packaging/android/www/app.js`
-- 修改：`packaging/android/www/style.css`
-- 修改：`packaging/android/package.json`（加 @capacitor/clipboard）
+- 修改：`packaging/android/www/parsers.js`（`XiaohongshuParser.parse` 内的请求方式）
 
 ## 验证
 
-1. `npm install @capacitor/clipboard@6 && npx cap sync android && cd android && ./gradlew assembleDebug`
+1. `npx cap copy android && cd android && ./gradlew assembleDebug`
 2. 安装新 APK
-3. 粘贴小红书链接 → 正常解析出图文/视频并可下载
-4. 点击"粘贴"按钮 → 从剪贴板自动填入（不再报错）
-5. 三个按钮同行等宽、风格统一；空时显示"粘贴"，有内容时显示"清除"
+3. 粘贴 `https://xhslink.cn/o/72Q1GlvETWE` → 解析出图文/视频并可下载
+4. finalUrl 应为真实 `xiaohongshu.com/discovery/item/...` 或从 stub HTML 提取到 noteId
