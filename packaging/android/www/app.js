@@ -145,9 +145,14 @@ async function parseLocal(urls) {
     const container = document.getElementById("results");
     for (const url of urls) {
         try {
-            // 小红书走远程后端（需服务器配置）；其余平台本地解析不变
+            // 小红书/Instagram 走远程后端（需服务器配置）；其余平台本地解析不变
             if (isXiaohongshu(url)) {
                 const r = await parseXhsRemote(url);
+                container.appendChild(createCard(r));
+                continue;
+            }
+            if (isInstagram(url)) {
+                const r = await parseInstagramRemote(url);
                 container.appendChild(createCard(r));
                 continue;
             }
@@ -164,12 +169,33 @@ function isXiaohongshu(url) {
         /xiaohongshu\.com\/(explore|discovery|note|item)/.test(url);
 }
 
+function isInstagram(url) {
+    return /instagram\.com\/(p|reel)\/[\w-]+/.test(url);
+}
+
 async function parseXhsRemote(url) {
     if (!serverUrl) {
         throw new Error("小红书需后端签名支持，请点右上角⚙配置服务器地址（部署 xhs 后端）");
     }
     const apiBase = serverUrl.replace(/\/$/, "") + "/api";
     const resp = await fetch(`${apiBase}/xhs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+    });
+    if (!resp.ok) {
+        const txt = await resp.text().catch(() => "");
+        throw new Error(`${resp.status} ${txt}`.slice(0, 200));
+    }
+    return await resp.json();
+}
+
+async function parseInstagramRemote(url) {
+    if (!serverUrl) {
+        throw new Error("Instagram 需后端支持，请点右上角⚙配置服务器地址（部署 instagram 后端，需服务器能访问 ins）");
+    }
+    const apiBase = serverUrl.replace(/\/$/, "") + "/api";
+    const resp = await fetch(`${apiBase}/instagram`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url }),

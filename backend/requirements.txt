@@ -6,3 +6,4 @@ pydantic-settings==2.5.2
 redis==5.1.0
 xhs>=0.2.13
 playwright>=1.40.0
+instaloader>=4.10

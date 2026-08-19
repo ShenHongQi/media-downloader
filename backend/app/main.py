@@ -7,10 +7,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api import download, parse, xhs
+from app.api import download, instagram, parse, xhs
 from app.parsers.registry import get_all_parsers
 from app.utils.http_client import close_client
 from app import xhs_runtime
+from app import instagram_runtime
 
 
 @asynccontextmanager
@@ -23,6 +24,13 @@ async def lifespan(app: FastAPI):
             print("[xhs] backend initialized")
         except Exception as e:
             print(f"[xhs] backend init failed (non-fatal): {e}")
+    # Instagram backend (instaloader). Non-fatal.
+    if os.environ.get("INSTAGRAM_BACKEND", "1") == "1":
+        try:
+            await asyncio.to_thread(instagram_runtime.init)
+            print("[instagram] backend initialized")
+        except Exception as e:
+            print(f"[instagram] backend init failed (non-fatal): {e}")
     yield
     await close_client()
     await asyncio.to_thread(xhs_runtime.close)
@@ -40,6 +48,7 @@ app.add_middleware(
 app.include_router(parse.router, prefix="/api")
 app.include_router(download.router, prefix="/api")
 app.include_router(xhs.router, prefix="/api")
+app.include_router(instagram.router, prefix="/api")
 
 
 @app.get("/api/platforms")
@@ -53,7 +62,11 @@ async def list_platforms():
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "xhs_ready": xhs_runtime._client is not None}
+    return {
+        "status": "ok",
+        "xhs_ready": xhs_runtime._client is not None,
+        "instagram_ready": instagram_runtime._L is not None,
+    }
 
 
 # Serve frontend static files (for standalone exe mode)
