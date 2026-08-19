@@ -1,3 +1,4 @@
+import asyncio
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -6,16 +7,25 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api import download, parse
+from app.api import download, parse, xhs
 from app.parsers.registry import get_all_parsers
 from app.utils.http_client import close_client
+from app import xhs_runtime
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     get_all_parsers()
+    # XHS backend (Playwright + xhs). Failures here are non-fatal for other platforms.
+    if os.environ.get("XHS_BACKEND", "1") == "1":
+        try:
+            await asyncio.to_thread(xhs_runtime.init)
+            print("[xhs] backend initialized")
+        except Exception as e:
+            print(f"[xhs] backend init failed (non-fatal): {e}")
     yield
     await close_client()
+    await asyncio.to_thread(xhs_runtime.close)
 
 
 app = FastAPI(title="Media Downloader", lifespan=lifespan)
@@ -29,6 +39,7 @@ app.add_middleware(
 
 app.include_router(parse.router, prefix="/api")
 app.include_router(download.router, prefix="/api")
+app.include_router(xhs.router, prefix="/api")
 
 
 @app.get("/api/platforms")
@@ -42,7 +53,7 @@ async def list_platforms():
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok"}
+    return {"status": "ok", "xhs_ready": xhs_runtime._client is not None}
 
 
 # Serve frontend static files (for standalone exe mode)
