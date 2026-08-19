@@ -10,7 +10,7 @@ _L = None
 
 
 def init():
-    """启动时初始化 Instaloader 实例并加载 cookie（若有）。"""
+    """启动时初始化 Instaloader 实例并加载 cookie/session（若有）。"""
     global _L
     from instaloader import Instaloader
 
@@ -21,6 +21,15 @@ def init():
             "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
         ),
     )
+    # 优先加载 instaloader session 文件（用 instaloader -l 用户名 登录生成）
+    session_user = os.environ.get("INSTAGRAM_USERNAME", "")
+    if session_user:
+        try:
+            _L.load_session_from_file(session_user)
+            print(f"[instagram] loaded session for {session_user}")
+        except Exception as e:
+            print(f"[instagram] session load failed (non-fatal): {e}")
+    # 兼容：直接设 cookie 字符串
     cookie_str = os.environ.get("INSTAGRAM_COOKIE", "")
     if cookie_str:
         for pair in cookie_str.split(";"):

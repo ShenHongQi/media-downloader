@@ -93,7 +93,11 @@ def parse(url):
     from xhs import help as xhs_help
 
     note_id, xsec_token = _resolve(url)
-    note = _client.get_note_by_id(note_id, xsec_token)
+    # xhs 0.2.13 的 get_note_by_id 只接受 note_id；新版可能支持 xsec_token。try 兼容。
+    try:
+        note = _client.get_note_by_id(note_id, xsec_token)
+    except TypeError:
+        note = _client.get_note_by_id(note_id)
 
     title = (note.get("title") or note.get("desc") or "") or ""
     author = (note.get("user") or {}).get("nickname", "") or ""
