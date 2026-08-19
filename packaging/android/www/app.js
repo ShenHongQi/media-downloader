@@ -50,7 +50,6 @@ function setMode(mode) {
 function updateModeUI() {
     document.getElementById("modeLocal").classList.toggle("active", parseMode === "local");
     document.getElementById("modeRemote").classList.toggle("active", parseMode === "remote");
-    document.getElementById("remoteConfig").classList.toggle("hidden", parseMode !== "remote");
 }
 
 function saveSettings() {
