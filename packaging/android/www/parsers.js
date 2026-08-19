@@ -511,40 +511,57 @@ class InstagramParser {
         if (!m) throw new Error("无法提取 Instagram shortcode");
         const shortcode = m[2];
 
-        const resp = await httpGet(
-            `https://www.instagram.com/p/${shortcode}/embed/captioned/`,
-            { headers: { "User-Agent": DESKTOP_UA } }
-        );
-        const html = typeof resp.data === "string" ? resp.data : "";
+        const embedUrl = `https://www.instagram.com/p/${shortcode}/embed/captioned/`;
+        const resp = await httpGet(embedUrl, { headers: { "User-Agent": DESKTOP_UA } });
+        const html = typeof resp.data === "string" ? resp.data : (resp.data ? JSON.stringify(resp.data) : "");
+        const status = resp.status;
 
-        const videoMatch = html.match(/"video_url":"([^"]+)"/);
-        const imageMatch = html.match(/"display_url":"([^"]+)"/);
+        const clean = (s) => (s || "").replace(/\\u0026/g, "&").replace(/\\\//g, "/");
+        const meta = (prop) => {
+            let mm = html.match(new RegExp(`<meta[^>]*(?:property|name)=["']${prop}["'][^>]*content=["']([^"']+)["']`, "i"));
+            if (mm) return mm[1];
+            mm = html.match(new RegExp(`<meta[^>]*content=["']([^"']+)["'][^>]*(?:property|name)=["']${prop}["']`, "i"));
+            return mm ? mm[1] : null;
+        };
 
-        if (!videoMatch && !imageMatch) {
-            throw new Error("Instagram 解析失败（可能需要登录或网络不通）");
-        }
+        const ogImage = meta("og:image") || meta("og:image:url");
+        const ogVideo = meta("og:video") || meta("og:video:url") || meta("og:video:secure_url");
+        const ogTitle = meta("og:title") || meta("twitter:title");
+        const ogDesc = meta("og:description") || meta("twitter:description");
 
-        if (videoMatch) {
+        // 正则放宽：处理 JSON 转义形式 \" 以及空格
+        const videoRe = html.match(/"video_url"\s*:\s*"([^"]+)"/) || html.match(/video_url\\":\\"([^\\]+)\\"/);
+        const imageRe = html.match(/"display_url"\s*:\s*"([^"]+)"/) || html.match(/display_url\\":\\"([^\\]+)\\"/);
+
+        const videoUrl = clean(ogVideo) || clean(videoRe && videoRe[1]);
+        const imageUrl = clean(ogImage) || clean(imageRe && imageRe[1]);
+
+        if (videoUrl) {
             return {
                 platform: "instagram",
                 media_type: "video",
-                title: "",
+                title: ogTitle || ogDesc || "",
                 author: "",
-                cover: imageMatch ? imageMatch[1].replace(/\\u0026/g, "&") : "",
-                items: [{ url: videoMatch[1].replace(/\\u0026/g, "&") }],
+                cover: imageUrl || "",
+                items: [{ url: videoUrl }],
+                original_url: url,
+            };
+        }
+        if (imageUrl) {
+            return {
+                platform: "instagram",
+                media_type: "image",
+                title: ogTitle || ogDesc || "",
+                author: "",
+                cover: imageUrl,
+                items: [{ url: imageUrl }],
                 original_url: url,
             };
         }
 
-        return {
-            platform: "instagram",
-            media_type: "image",
-            title: "",
-            author: "",
-            cover: imageMatch[1].replace(/\\u0026/g, "&"),
-            items: [{ url: imageMatch[1].replace(/\\u0026/g, "&") }],
-            original_url: url,
-        };
+        throw new Error(
+            `Instagram 解析失败 (status=${status}, htmlLen=${html.length}, ogImg=${ogImage ? "y" : "n"}, ogVid=${ogVideo ? "y" : "n"}, vUrl=${videoRe ? "y" : "n"}, dUrl=${imageRe ? "y" : "n"})`
+        );
     }
 }
 
