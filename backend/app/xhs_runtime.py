@@ -3,6 +3,11 @@
 
 仅在服务端运行（云主机），App 端通过 /api/xhs 远程调用。
 抖音/B站等平台不走此模块，不受影响。
+
+cookie 策略：
+- 匿名 a1 会被风控（code -1 / 300011）。需登录态 XHS_COOKIE（a1+web_session+webId）。
+- a1 必须与 web_session 登录设备一致 → 用 xhs_login.py 在服务器本地登录生成。
+- 设 cookie 后不 reload（reload 触发 _webmsxyw 浏览器检测 SignError）。
 """
 import os
 import re
@@ -18,27 +23,37 @@ _client = None
 
 
 def init():
-    """启动时常驻初始化：启动 Chromium、访问小红书、等 _webmsxyw 挂载、读 a1、建 XhsClient。"""
+    """启动时常驻初始化：启动 Chromium、设 cookie（若有）、等 _webmsxyw 挂载、建 XhsClient。"""
     global _playwright, _browser, _global_page, _client
     from playwright.sync_api import sync_playwright
     from xhs import XhsClient
 
     _playwright = sync_playwright().start()
-    _browser = _playwright.chromium.launch(headless=True)
+    headless = os.environ.get("XHS_HEADLESS", "1") == "1"
+    _browser = _playwright.chromium.launch(headless=headless)
     ctx = _browser.new_context()
     if os.path.exists(STEALTH_JS_PATH):
         ctx.add_init_script(path=STEALTH_JS_PATH)
+
+    user_cookie = os.environ.get("XHS_COOKIE", "")
+    if user_cookie:
+        for pair in user_cookie.split(";"):
+            pair = pair.strip()
+            if "=" in pair:
+                k, v = pair.split("=", 1)
+                ctx.add_cookies([{"name": k.strip(), "value": v.strip(), "domain": ".xiaohongshu.com", "path": "/"}])
+
     _global_page = ctx.new_page()
     _global_page.goto(HOME, wait_until="domcontentloaded")
-    # 等签名函数挂到 window
     _global_page.wait_for_function("typeof window._webmsxyw === 'function'", timeout=30000)
     _global_page.wait_for_timeout(2000)
-    # 读取浏览器自动生成的 a1，作为 cookie 保证签名一致
-    cookies = ctx.cookies()
-    a1 = next((c["value"] for c in cookies if c["name"] == "a1"), "")
-    if not a1:
-        raise RuntimeError("未获取到 a1 cookie，无法签名")
-    _client = XhsClient(f"a1={a1}", sign=_sign)
+
+    if user_cookie:
+        cookie_str = user_cookie
+    else:
+        a1 = next((c["value"] for c in ctx.cookies() if c["name"] == "a1"), "")
+        cookie_str = f"a1={a1}"
+    _client = XhsClient(cookie_str, sign=_sign)
 
 
 def close():
@@ -56,7 +71,7 @@ def close():
 
 
 def _sign(api, data=None, a1="", web_session=""):
-    """xhs 库要求的签名函数：返回 {'x-s','x-t'}。用常驻 page 调 _webmsxyw。"""
+    """xhs 库要求的签名函数：返回 {'x-s','x-t'}。用常驻 page 调 _webmsxyw（不 reload）。"""
     encrypt = _global_page.evaluate(
         "([url, data]) => window._webmsxyw(url, data)", [api, data]
     )
@@ -93,7 +108,6 @@ def parse(url):
     from xhs import help as xhs_help
 
     note_id, xsec_token = _resolve(url)
-    # xhs 0.2.13 的 get_note_by_id 只接受 note_id；新版可能支持 xsec_token。try 兼容。
     try:
         note = _client.get_note_by_id(note_id, xsec_token)
     except TypeError:
