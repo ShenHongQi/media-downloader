@@ -129,9 +129,46 @@ curl -s -X POST http://localhost:8000/api/instagram -H "Content-Type: applicatio
 ```
 返回正常 JSON 即 cookie 有效；报错即需更新。
 
-## 九、常驻运行（systemd）
+## 九、常驻运行（systemd）+ 一键部署
 
-环境变量写进 systemd，持久化：
+### 一键部署脚本（推荐）
+
+`backend/scripts/deploy.sh` 自动完成：系统依赖 → Python 依赖 → Playwright Chromium → stealth.min.js → 环境变量文件 → systemd 服务。
+
+```bash
+# 服务器 root 执行
+cd ~/media-downloader
+git pull origin main
+export INSTAGRAM_COOKIE='sessionid=...; csrftoken=...; ds_user_id=...; ig_did=...; mid=...; datr=...; rur=...'
+bash backend/scripts/deploy.sh
+```
+
+脚本完成后服务常驻：**开机自启 + 崩溃自动重启 + 断开 SSH 终端不影响**。
+
+> **断开终端会断吗？** 不会。systemd 是系统级服务管理器，独立于终端会话。前台 `uvicorn`（关终端停）或 `nohup &`（关终端不停但开机不自启）才受影响。systemd 是正确方案。
+
+### 常用运维命令
+
+```bash
+sudo journalctl -u media-downloader -f        # 查看日志
+sudo systemctl restart media-downloader      # 重启
+sudo systemctl stop media-downloader         # 停止
+sudo systemctl status media-downloader        # 状态
+```
+
+### 更新 cookie（过期后）
+
+cookie 存 `/etc/media-downloader.env`（权限 600）。Instagram cookie 失效后：
+
+1. 重新手机导 cookie（第五节）
+2. 编辑 `/etc/media-downloader.env` 改 `INSTAGRAM_COOKIE=` 那行
+3. `sudo systemctl daemon-reload && sudo systemctl restart media-downloader`
+
+或重新跑 `export INSTAGRAM_COOKIE='...'; bash backend/scripts/deploy.sh`（会覆盖 env 文件）。
+
+### 手动部署（不用脚本）
+
+环境变量写进 systemd `Environment=`，或用 `EnvironmentFile=/etc/media-downloader.env`：
 
 ```bash
 sudo tee /etc/systemd/system/media-downloader.service << 'EOF'
@@ -142,8 +179,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/root/media-downloader/backend
-Environment=STEALTH_JS_PATH=/root/media-downloader/backend/stealth.min.js
-Environment=INSTAGRAM_COOKIE=sessionid=xxx; csrftoken=yyy; ds_user_id=zzz; ig_did=...; mid=...; datr=...; rur=...
+EnvironmentFile=/etc/media-downloader.env
 ExecStart=/root/media-downloader/backend/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=5
@@ -152,12 +188,13 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
+# /etc/media-downloader.env 内容：
+# STEALTH_JS_PATH=/root/media-downloader/backend/stealth.min.js
+# INSTAGRAM_COOKIE=sessionid=xxx; csrftoken=yyy; ...
+
 sudo systemctl daemon-reload
 sudo systemctl enable --now media-downloader
-sudo systemctl status media-downloader
 ```
-
-更新 cookie 后：`sudo systemctl restart media-downloader`
 
 ## 十、App 配置
 
