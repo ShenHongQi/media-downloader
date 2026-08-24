@@ -1,9 +1,9 @@
-"""服务器登录小红书（扫码模式），生成 XHS_COOKIE。
+"""服务器图形界面登录小红书，手动过验证码，生成 XHS_COOKIE。
 
-用法：
+用法（在图形界面终端跑，不是 SSH 无图形）：
   export STEALTH_JS_PATH=$(pwd)/stealth.min.js
   python xhs_login.py
-  # 另开终端下载二维码扫码（脚本会提示），扫码后自动检测登录
+  # 浏览器窗口弹出在桌面 → 扫码登录 → 出验证码手动过 → 回终端按回车 → 导出 cookie
 """
 import os
 import time
@@ -26,7 +26,8 @@ def click_first(page, selectors, label="btn"):
 
 
 with sync_playwright() as p:
-    browser = p.chromium.launch(headless=True)
+    # 有头模式，显示在图形桌面（不用 Xvfb，用户可交互过验证码）
+    browser = p.chromium.launch(headless=False)
     ctx = browser.new_context(
         user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
@@ -41,18 +42,9 @@ with sync_playwright() as p:
     # 点登录按钮（默认二维码扫码）
     click_first(page, ['text=登录', 'button:has-text("登录")'], "login-btn")
     time.sleep(4)
+    print(">>> 浏览器已打开，用手机小红书 App 扫码登录")
 
-    page.screenshot(path="/tmp/xhs_qr.png")
-    print("=== 二维码已截图: /tmp/xhs_qr.png ===")
-    print(">>> 另开一个终端执行（下载二维码 + 扫码）:")
-    print("    sudo systemctl stop media-downloader")
-    print("    cd /tmp && python3 -m http.server 8000")
-    print("    Mac 浏览器打开: http://47.239.52.21:8000/xhs_qr.png")
-    print("    用手机小红书 App 扫描二维码 → 确认登录")
-    print(">>> 扫码后本脚本自动检测（180秒内）")
-    print("")
-
-    # 等 web_session cookie（扫码登录后出现）
+    # 等扫码登录（web_session 出现）
     logged = False
     for i in range(180):
         time.sleep(1)
@@ -62,10 +54,25 @@ with sync_playwright() as p:
             logged = True
             print("✅ 扫码登录成功")
             break
-        if i % 30 == 29:
-            print(f"  等待扫码... ({i+1}s)")
     if not logged:
-        print("❌ 180s 超时未登录。确认二维码是否扫了，或重试。")
+        print("❌ 180s 超时未登录")
+
+    # 导航笔记页，触发可能的验证码，让用户在浏览器手动过
+    print(">>> 导航笔记页，如出验证码/滑块请在浏览器手动过")
+    try:
+        page.goto("https://www.xiaohongshu.com/explore", wait_until="domcontentloaded")
+    except Exception:
+        pass
+    time.sleep(2)
+    print(">>> 验证码过了（或没出现）后，回此终端按回车继续")
+    input()
+
+    # 再访问一个笔记页（进一步建立信任）
+    try:
+        page.goto("https://www.xiaohongshu.com/explore", wait_until="domcontentloaded")
+        time.sleep(3)
+    except Exception:
+        pass
 
     cookies = ctx.cookies()
     xhs = [c for c in cookies if "xiaohongshu.com" in c["domain"]]
@@ -73,4 +80,7 @@ with sync_playwright() as p:
     cookie_str = "; ".join(f"{c['name']}={c['value']}" for c in xhs if c["name"] in names)
     print("=== RESULT ===")
     print("XHS_COOKIE=" + cookie_str)
+    print(">>> 设给后端：")
+    print("    sudo bash -c 'echo \"XHS_COOKIE=" + cookie_str + "\" >> /etc/media-downloader.env'")
+    print("    sudo systemctl restart media-downloader")
     browser.close()
