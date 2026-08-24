@@ -80,6 +80,10 @@ echo "=== 验证 ==="
 curl -s http://localhost:8000/api/health || echo "（服务可能还在初始化，稍等后再 curl）"
 
 echo ""
+echo "=== ⚠️ 验证进程拿到 cookie（非空才对）==="
+cat /proc/$(pgrep -f "uvicorn app.main" | head -1)/environ 2>/dev/null | tr '\0' '\n' | grep INSTAGRAM_COOKIE | head -c 40 || echo "（未检测到，检查 /etc/media-downloader.env）"
+
+echo ""
 echo "=== 完成 ==="
 echo "服务已常驻（开机自启 + 断开终端不影响 + 崩溃自动重启）"
 echo "查看日志:   sudo journalctl -u media-downloader -f"
