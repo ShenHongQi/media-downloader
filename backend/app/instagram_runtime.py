@@ -137,11 +137,18 @@ def _try_private_api(shortcode, original_url):
 
         def best_img(versions):
             cands = (versions or {}).get("candidates") or []
-            return cands[-1].get("url", "") if cands else ""
+            if not cands:
+                return ""
+            # 取最大 width 的（高清原图），不是 [-1]（可能是缩略图）
+            best = max(cands, key=lambda c: c.get("width", 0) or 0)
+            return best.get("url", "")
 
-        def best_vid(versions):
-            vv = item.get("video_versions") or []
-            return vv[0].get("url", "") if vv else ""
+        def best_vid(versions_list):
+            vv = versions_list or []
+            if not vv:
+                return ""
+            best = max(vv, key=lambda c: c.get("width", 0) or 0)
+            return best.get("url", "")
 
         # 图集 carousel_media
         carousel = item.get("carousel_media")
@@ -149,7 +156,7 @@ def _try_private_api(shortcode, original_url):
             media_items = []
             for cm in carousel:
                 if cm.get("video_versions"):
-                    media_items.append({"url": cm["video_versions"][0].get("url", "")})
+                    media_items.append({"url": best_vid(cm.get("video_versions"))})
                 else:
                     media_items.append({"url": best_img(cm.get("image_versions2"))})
             media_items = [m for m in media_items if m["url"]]
@@ -166,7 +173,7 @@ def _try_private_api(shortcode, original_url):
 
         # 单视频
         if media_type == 2 or item.get("video_versions"):
-            vurl = (item.get("video_versions") or [{}])[0].get("url", "")
+            vurl = best_vid(item.get("video_versions"))
             cover = best_img(item.get("image_versions2"))
             return {
                 "platform": "instagram",
