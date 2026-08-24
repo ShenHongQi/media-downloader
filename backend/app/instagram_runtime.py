@@ -1,12 +1,26 @@
-"""Instagram backend runtime: 用 instaloader 库解析公开帖。
+"""Instagram backend runtime: instaloader 解析 + 缓存 + 限流缓解。
 
-服务端运行。instaloader 基于 requests，尊重 HTTPS_PROXY 环境变量（阿里云国内需配代理才能访问 instagram）。
-匿名可能被限，建议配 INSTAGRAM_COOKIE 环境变量（浏览器登录后复制的完整 cookie）。
+限流缓解：
+- 内存缓存 shortcode→result（TTL 1h），重复解析不请求 Instagram
+- 请求间隔 ≥8s，降低累积触发
+- embed 优先（单视频帖省 graphql）
+- 401 限流友好错误（不重试轰炸）
 """
 import os
 import re
+import time
+from urllib.parse import urlparse, parse_qs
 
 _L = None
+_cache = {}  # shortcode -> (result, timestamp)
+_last_request_ts = 0
+CACHE_TTL = 3600
+REQUEST_INTERVAL = 8
+
+DESKTOP_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
 
 
 def init():
@@ -14,14 +28,7 @@ def init():
     global _L
     from instaloader import Instaloader
 
-    _L = Instaloader(
-        quiet=True,
-        user_agent=(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-        ),
-    )
-    # 优先加载 instaloader session 文件（用 instaloader -l 用户名 登录生成）
+    _L = Instaloader(quiet=True, user_agent=DESKTOP_UA)
     session_user = os.environ.get("INSTAGRAM_USERNAME", "")
     if session_user:
         try:
@@ -29,7 +36,6 @@ def init():
             print(f"[instagram] loaded session for {session_user}")
         except Exception as e:
             print(f"[instagram] session load failed (non-fatal): {e}")
-    # 兼容：直接设 cookie 字符串
     cookie_str = os.environ.get("INSTAGRAM_COOKIE", "")
     if cookie_str:
         for pair in cookie_str.split(";"):
@@ -39,15 +45,56 @@ def init():
                 _L.context._session.cookies.set(k.strip(), v.strip(), domain=".instagram.com")
 
 
-def parse(url):
-    """解析 Instagram 链接，返回 MediaResult 字典。在线程池调用。"""
+def _wait_interval():
+    """连续请求间隔，降低限流触发。"""
+    global _last_request_ts
+    now = time.time()
+    wait = REQUEST_INTERVAL - (now - _last_request_ts)
+    if wait > 0:
+        time.sleep(wait)
+    _last_request_ts = time.time()
+
+
+def _meta(html, prop):
+    import re as _re
+    m = _re.search(rf'<meta[^>]*(?:property|name)=["\']{_re.escape(prop)}["\'][^>]*content=["\']([^"\']+)["\']', html, _re.I)
+    if m:
+        return m[1]
+    m = _re.search(rf'<meta[^>]*content=["\']([^"\']+)["\'][^>]*(?:property|name)=["\']{_re.escape(prop)}["\']', html, _re.I)
+    return m[1] if m else None
+
+
+def _try_embed(shortcode, original_url):
+    """embed 页拿 og:video（单视频帖直接返回，不限流）。单图/图集返回 None 走 graphql。"""
+    import httpx
+    try:
+        r = httpx.get(
+            f"https://www.instagram.com/p/{shortcode}/embed/",
+            timeout=15,
+            headers={"User-Agent": DESKTOP_UA},
+        )
+        html = r.text
+        og_video = _meta(html, "og:video") or _meta(html, "og:video:url") or _meta(html, "og:video:secure_url")
+        if og_video:
+            og_image = _meta(html, "og:image") or ""
+            og_title = _meta(html, "og:title") or _meta(html, "og:description") or ""
+            return {
+                "platform": "instagram",
+                "media_type": "video",
+                "title": og_title,
+                "author": "",
+                "cover": og_image,
+                "items": [{"url": og_video}],
+                "original_url": original_url,
+            }
+    except Exception:
+        pass
+    return None
+
+
+def _parse_graphql(shortcode, original_url):
+    """instaloader graphql 解析（单图/图集）。"""
     from instaloader import Post
-
-    m = re.search(r"/(?:p|reel)/([\w-]+)", url)
-    if not m:
-        raise ValueError("无法提取 shortcode")
-    shortcode = m[1]
-
     post = Post.from_shortcode(_L.context, shortcode)
     node = post._node
     title = post.caption or ""
@@ -56,7 +103,6 @@ def parse(url):
     except Exception:
         author = ""
 
-    # 优先用 edge_sidecar_to_children（图集/多图多视频，4.15.3 无 get_sidecar_edges）
     sidecar = node.get("edge_sidecar_to_children")
     if sidecar:
         items = []
@@ -73,10 +119,9 @@ def parse(url):
                 "author": author,
                 "cover": items[0]["url"],
                 "items": items,
-                "original_url": url,
+                "original_url": original_url,
             }
 
-    # 单视频：优先新版 video_versions，回退 post.video_url
     vurl = ""
     vv = node.get("video_versions")
     if vv:
@@ -104,10 +149,9 @@ def parse(url):
             "author": author,
             "cover": cover,
             "items": [{"url": vurl}],
-            "original_url": url,
+            "original_url": original_url,
         }
 
-    # 单图
     img = ""
     try:
         img = post.url or ""
@@ -124,5 +168,39 @@ def parse(url):
         "author": author,
         "cover": img,
         "items": [{"url": img}],
-        "original_url": url,
+        "original_url": original_url,
     }
+
+
+def parse(url):
+    """解析 Instagram 链接。缓存 + 间隔 + embed 优先 + graphql + 401 友好。"""
+    m = re.search(r"/(?:p|reel)/([\w-]+)", url)
+    if not m:
+        raise ValueError("无法提取 shortcode")
+    shortcode = m[1]
+
+    # 缓存命中（不请求网络，不计间隔）
+    now = time.time()
+    cached = _cache.get(shortcode)
+    if cached and now - cached[1] < CACHE_TTL:
+        return cached[0]
+
+    # 请求间隔
+    _wait_interval()
+
+    # embed 优先（单视频帖）
+    embed_result = _try_embed(shortcode, url)
+    if embed_result:
+        _cache[shortcode] = (embed_result, time.time())
+        return embed_result
+
+    # graphql（单图/图集）
+    try:
+        result = _parse_graphql(shortcode, url)
+        _cache[shortcode] = (result, time.time())
+        return result
+    except Exception as e:
+        msg = str(e)
+        if "401" in msg or "Please wait" in msg or "Unauthorized" in msg or "rate" in msg.lower():
+            raise RuntimeError("Instagram 限流，请稍后重试（几分钟到几小时）") from e
+        raise
