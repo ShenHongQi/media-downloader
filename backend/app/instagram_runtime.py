@@ -92,6 +92,107 @@ def _try_embed(shortcode, original_url):
     return None
 
 
+def _shortcode_to_media_id(shortcode):
+    """Instagram shortcode -> media_id (base64url 解码)。"""
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    num = 0
+    for c in shortcode:
+        if c in alphabet:
+            num = num * 64 + alphabet.index(c)
+    return num
+
+
+def _ig_cookies():
+    """从 instaloader session 取 instagram cookie dict。"""
+    return {c.name: c.value for c in _L.context._session.cookies if "instagram.com" in (c.domain or "")}
+
+
+def _try_private_api(shortcode, original_url):
+    """私有 API i.instagram.com/api/v1/media/{id}/info/（不同端点类，限流可能更宽松）。"""
+    import httpx
+    media_id = _shortcode_to_media_id(shortcode)
+    if not media_id:
+        return None
+    try:
+        r = httpx.get(
+            f"https://i.instagram.com/api/v1/media/{media_id}/info/",
+            timeout=15,
+            headers={
+                "User-Agent": "Instagram 76.0.0.15.395 Android (default)",
+                "x-ig-app-id": "936619743392459",
+            },
+            cookies=_ig_cookies(),
+        )
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        items = data.get("items") or []
+        if not items:
+            return None
+        item = items[0]
+        media_type = item.get("media_type")
+        title = item.get("caption", "") if isinstance(item.get("caption"), str) else ""
+        user = item.get("user") or {}
+        author = user.get("username", "")
+
+        def best_img(versions):
+            cands = (versions or {}).get("candidates") or []
+            return cands[-1].get("url", "") if cands else ""
+
+        def best_vid(versions):
+            vv = item.get("video_versions") or []
+            return vv[0].get("url", "") if vv else ""
+
+        # 图集 carousel_media
+        carousel = item.get("carousel_media")
+        if carousel:
+            media_items = []
+            for cm in carousel:
+                if cm.get("video_versions"):
+                    media_items.append({"url": cm["video_versions"][0].get("url", "")})
+                else:
+                    media_items.append({"url": best_img(cm.get("image_versions2"))})
+            media_items = [m for m in media_items if m["url"]]
+            if media_items:
+                return {
+                    "platform": "instagram",
+                    "media_type": "album",
+                    "title": title,
+                    "author": author,
+                    "cover": media_items[0]["url"],
+                    "items": media_items,
+                    "original_url": original_url,
+                }
+
+        # 单视频
+        if media_type == 2 or item.get("video_versions"):
+            vurl = (item.get("video_versions") or [{}])[0].get("url", "")
+            cover = best_img(item.get("image_versions2"))
+            return {
+                "platform": "instagram",
+                "media_type": "video",
+                "title": title,
+                "author": author,
+                "cover": cover,
+                "items": [{"url": vurl}],
+                "original_url": original_url,
+            }
+
+        # 单图
+        img = best_img(item.get("image_versions2"))
+        return {
+            "platform": "instagram",
+            "media_type": "image",
+            "title": title,
+            "author": author,
+            "cover": img,
+            "items": [{"url": img}],
+            "original_url": original_url,
+        }
+    except Exception:
+        return None
+
+
 def _parse_graphql(shortcode, original_url):
     """instaloader graphql 解析（单图/图集）。"""
     from instaloader import Post
@@ -193,6 +294,12 @@ def parse(url):
     if embed_result:
         _cache[shortcode] = (embed_result, time.time())
         return embed_result
+
+    # 私有 API（不同端点类，限流可能更宽松），失败回退 graphql
+    private_result = _try_private_api(shortcode, url)
+    if private_result:
+        _cache[shortcode] = (private_result, time.time())
+        return private_result
 
     # graphql（单图/图集）
     try:
