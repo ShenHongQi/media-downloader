@@ -33,7 +33,6 @@ a = Analysis(
         'app.parsers.douyin',
         'app.parsers.bilibili',
         'app.parsers.xiaohongshu',
-        'app.parsers.kuaishou',
         'app.parsers.tiktok',
         'app.parsers.instagram',
     ],

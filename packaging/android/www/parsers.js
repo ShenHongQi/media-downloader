@@ -9,7 +9,6 @@ class ParserRegistry {
             new DouyinParser(),
             new BilibiliParser(),
             new XiaohongshuParser(),
-            new KuaishouParser(),
             new TiktokParser(),
             new InstagramParser(),
         ];
@@ -428,38 +427,6 @@ class XiaohongshuParser {
                 width: img.width,
                 height: img.height,
             })),
-            original_url: url,
-        };
-    }
-}
-
-class KuaishouParser {
-    detect(url) {
-        return /v\.kuaishou\.com\/\w+/.test(url) ||
-            /kuaishou\.com\/short-video\/\w+/.test(url);
-    }
-
-    async parse(url) {
-        if (url.includes("v.kuaishou.com")) url = await resolveRedirect(url);
-        const m = url.match(/\/short-video\/(\w+)/) || url.match(/photoId=(\w+)/);
-        if (!m) throw new Error("无法提取快手视频 ID");
-
-        const resp = await httpPost(
-            "https://v.m.chenzhongtech.com/rest/wd/photo/info",
-            { photoId: m[1], isLongVideo: false },
-            { headers: { Referer: "https://v.kuaishou.com/" } }
-        );
-        const data = typeof resp.data === "string" ? JSON.parse(resp.data) : resp.data;
-        if (data.result !== 1) throw new Error("快手 API 错误");
-
-        const photo = data.photo || {};
-        return {
-            platform: "kuaishou",
-            media_type: "video",
-            title: photo.caption || "",
-            author: data.user?.userName || "",
-            cover: photo.coverUrl || "",
-            items: [{ url: photo.mainMvUrl || photo.photoUrl || "", duration: (photo.duration || 0) / 1000 }],
             original_url: url,
         };
     }

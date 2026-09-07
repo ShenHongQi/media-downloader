@@ -7,7 +7,6 @@ const PLATFORM_REFERER = {
     douyin: "https://www.douyin.com/",
     bilibili: "https://www.bilibili.com/",
     xiaohongshu: "https://www.xiaohongshu.com/",
-    kuaishou: "https://v.kuaishou.com/",
     tiktok: "https://www.tiktok.com/",
     instagram: "https://www.instagram.com/",
 };

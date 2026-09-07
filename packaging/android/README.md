@@ -54,6 +54,7 @@ npx cap open android
 - 抖音（视频、图文）
 - B站（视频）
 - 小红书（图文、视频）
-- 快手（视频）
+(
+    )
 - TikTok（需要可访问 TikTok 的网络）
 - Instagram（需要可访问 Instagram 的网络）

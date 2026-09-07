@@ -9,7 +9,7 @@
 | 抖音 | 视频、图文 | `v.douyin.com/xxx` 或 `douyin.com/video/xxx` |
 | B站 | 视频 | `bilibili.com/video/BVxxx` 或 `b23.tv/xxx` |
 | 小红书 | 图文、视频 | `xiaohongshu.com/explore/xxx` 或 `xhslink.com/xxx` |
-| 快手 | 视频 | `v.kuaishou.com/xxx` 或 `kuaishou.com/short-video/xxx` |
+
 | TikTok | 视频 | `vm.tiktok.com/xxx` 或 `tiktok.com/@user/video/xxx` |
 | Instagram | 图片、视频、图集 | `instagram.com/p/xxx` 或 `instagram.com/reel/xxx` |
 

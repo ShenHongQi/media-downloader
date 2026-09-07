@@ -15,7 +15,6 @@ class Platform(str, Enum):
     TIKTOK = "tiktok"
     INSTAGRAM = "instagram"
     XIAOHONGSHU = "xiaohongshu"
-    KUAISHOU = "kuaishou"
     BILIBILI = "bilibili"
 
 

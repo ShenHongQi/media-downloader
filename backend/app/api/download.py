@@ -11,7 +11,6 @@ PLATFORM_HEADERS = {
     Platform.TIKTOK: {"Referer": "https://www.tiktok.com/"},
     Platform.INSTAGRAM: {"Referer": "https://www.instagram.com/"},
     Platform.XIAOHONGSHU: {"Referer": "https://www.xiaohongshu.com/"},
-    Platform.KUAISHOU: {"Referer": "https://www.kuaishou.com/"},
     Platform.BILIBILI: {"Referer": "https://www.bilibili.com/"},
 }
 
