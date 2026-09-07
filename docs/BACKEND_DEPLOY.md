@@ -26,7 +26,7 @@
 | 变量 | 必需 | 说明 |
 |------|------|------|
 | `STEALTH_JS_PATH` | 小红书+ins登录需要 | stealth.min.js 绝对路径，绕过浏览器环境检测 |
-| `INSTAGRAM_COOKIE` | Instagram | 手机导出的 ins 登录 cookie 字符串（`sessionid=...; csrftoken=...; ...`） |
+| `INSTAGRAM_COOKIE` | Instagram | ins 登录 cookie，支持多套用 `|` 分隔（`cookie1|cookie2|...`），每次请求轮换，降低单账号限流。需定期更新（数天/周）。 |
 | `INSTAGRAM_USERNAME` | 可选 | instaloader 命令行登录的 session 用户名（`instaloader -l` 生成 session 文件后设） |
 | `XHS_COOKIE` | 小红书 | 服务器登录生成的小红书 cookie（`a1=...; web_session=...; webId=...`） |
 | `XHS_HEADLESS` | 可选 | 小红书 Playwright 模式：`1`=headless（默认），`0`=有头（需 `xvfb-run`，绕 headless 检测） |
@@ -65,19 +65,70 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 启动日志应见 `[instagram] backend initialized`。`[xhs] backend initialized` 也会出现但小红书解析仍受异地风控（见第七节）。
 
-## 五、Instagram cookie 获取（手机导出，已验证可行）
+## 五、Instagram cookie 获取与多账号轮换
 
-Instagram 用 `sessionid` 登录态，不绑定设备，手机导出即可。
+Instagram 用 `sessionid` 登录态，不绑定设备，手机导出即可。**Cookie 需要定期更新**（session 会被限流/过期，通常数天到数周）。
 
-1. Android 装 **Kiwi Browser**（支持 Chrome 扩展）
-2. Kiwi 装 **Cookie Editor** 扩展（Chrome 网上应用店）
-3. Kiwi 登录 `instagram.com`
+### 手机导出 Cookie（Android + Kiwi Browser）
+
+1. 装 **Kiwi Browser**（支持 Chrome 扩展）
+2. Kiwi 装 **Cookie Editor** 扩展
+3. Kiwi 打开 `instagram.com` 登录
 4. Cookie Editor → instagram.com → **Export**
-5. 找 `sessionid`/`csrftoken`/`ds_user_id`/`ig_did`/`mid`/`datr`/`rur`，拼成：
-   `sessionid=xxx; csrftoken=yyy; ds_user_id=zzz; ig_did=...; mid=...; datr=...; rur=...`
-6. 设 `export INSTAGRAM_COOKIE='上面那串'`，重启后端
+5. 找 `sessionid` / `csrftoken` / `ds_user_id` / `ig_did` / `mid` / `datr` / `rur`，拼成一行
 
-iOS 不支持浏览器扩展，建议借 Android 设备，或用 `ig_login.py`（服务器 Playwright 登录，但 headless 大概率被 ins 检测拦，不推荐）。
+### 远端服务器更新 Cookie（完整命令）
+
+拿到新 cookie 后，SSH 登录服务器，执行以下命令更新：
+
+**替换单 cookie：**
+```bash
+sudo sed -i '/^INSTAGRAM_COOKIE=/d' /etc/media-downloader.env
+echo "INSTAGRAM_COOKIE=sessionid=新值; csrftoken=新值; ds_user_id=新值; ig_did=新值; mid=新值; datr=新值; rur=新值" | sudo tee -a /etc/media-downloader.env
+sudo systemctl restart media-downloader
+```
+
+**追加多 cookie 轮换（`|` 分隔，降低单账号频率）：**
+```bash
+sudo sed -i '/^INSTAGRAM_COOKIE=/d' /etc/media-downloader.env
+echo "INSTAGRAM_COOKIE=cookie1|sessionid=...; csrftoken=...; ds_user_id=...; ig_did=...; mid=...; datr=...; rur=...|cookie2|sessionid=...; csrftoken=...; ds_user_id=...; ig_did=...; mid=...; datr=...; rur=..." | sudo tee -a /etc/media-downloader.env
+sudo systemctl restart media-downloader
+```
+
+示例（两套 cookie 轮换）：
+```bash
+sudo sed -i '/^INSTAGRAM_COOKIE=/d' /etc/media-downloader.env
+cat >> /etc/media-downloader.env << 'EOF'
+INSTAGRAM_COOKIE=sessionid=账号1的sessionid; csrftoken=账号1的csrftoken; ds_user_id=账号1的id; ig_did=账号1的ig_did; mid=账号1的mid; datr=账号1的datr; rur=账号1的rur|sessionid=账号2的sessionid; csrftoken=账号2的csrftoken; ds_user_id=账号2的id; ig_did=账号2的ig_did; mid=账号2的mid; datr=账号2的datr; rur=账号2的rur
+EOF
+sudo systemctl restart media-downloader
+```
+
+### 验证更新生效
+
+```bash
+# 1. 确认进程已加载新 cookie
+cat /proc/$(pgrep -f "uvicorn app.main" | head -1)/environ | tr '\0' '\n' | grep INSTAGRAM_COOKIE | head -c 60
+
+# 2. 看日志确认轮换池数量
+sudo journalctl -u media-downloader --since "1 min ago" --no-pager | grep "cookie pool"
+# 应输出：[instagram] cookie pool: 2 accounts
+
+# 3. 测试解析
+curl -s -X POST http://localhost:8000/api/instagram -H "Content-Type: application/json" -d '{"url":"https://www.instagram.com/p/某shortcode/"}' | head -c 100
+```
+
+### 轮换机制
+
+每次实际请求自动切换到下一个 cookie（缓存命中不轮换）：
+- 请求 1 → 账号 1
+- 请求 2 → 账号 2
+- 请求 3 → 账号 1
+- ...
+
+单账号访问频率减半（N 套 cookie 减 N 倍），大幅降低限流触发概率。3 套、4 套都能自动轮换，只需在 `INSTAGRAM_COOKIE=` 值里用 `|` 连接。
+
+iOS 不支持浏览器扩展，建议借 Android 设备。
 
 ## 六、抖音方案（App 本地，无需后端）
 
@@ -114,22 +165,40 @@ xvfb-run uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 ## 八、Cookie 过期解决方案
 
-### Instagram（sessionid）
-- 有效期约 1 年，但异地登录/可疑活动可能提前失效
-- 失效表现：`/api/instagram` 报 `no such group` 或 `401/login required`
-- **解决**：重新手机导 cookie（第五节），更新 `INSTAGRAM_COOKIE`，重启后端
+**Instagram cookie 需要定期更新**（session 会被限流/过期，通常可用数天到数周）。
+
+### 失效表现
+- `/api/instagram` 报 401 / `Instagram 限流` / `no such group`
+- 解析速度明显变慢（软限流，延迟）
+
+### 更新 cookie（完整命令）
+
+**替换单 cookie：**
+```bash
+sudo sed -i '/^INSTAGRAM_COOKIE=/d' /etc/media-downloader.env
+echo "INSTAGRAM_COOKIE=sessionid=新值; csrftoken=新值; ds_user_id=新值; ig_did=新值; mid=新值; datr=新值; rur=新值" | sudo tee -a /etc/media-downloader.env
+sudo systemctl restart media-downloader
+```
+
+**追加多 cookie 轮换（`|` 分隔）：**
+```bash
+sudo sed -i '/^INSTAGRAM_COOKIE=/d' /etc/media-downloader.env
+cat >> /etc/media-downloader.env << 'EOF'
+INSTAGRAM_COOKIE=cookie1|sessionid=...; csrftoken=...; ds_user_id=...; ig_did=...; mid=...; datr=...; rur=...|cookie2|sessionid=...; csrftoken=...; ds_user_id=...; ig_did=...; mid=...; datr=...; rur=...
+EOF
+sudo systemctl restart media-downloader
+```
+
+**验证：**
+```bash
+cat /proc/$(pgrep -f "uvicorn app.main"|head -1)/environ | tr '\0' '\n' | grep INSTAGRAM_COOKIE | head -c 60
+sudo journalctl -u media-downloader --since "1 min ago" --no-pager | grep "cookie pool"
+```
 
 ### 小红书（web_session）
 - 有效期约 1-3 月
 - 失效表现：`300011 账号异常` 或 `code -1`
-- **解决**：重新服务器登录（`xhs_login.py`），更新 `XHS_COOKIE`，重启
-
-### 检测脚本（定时验证 cookie 是否有效）
-```bash
-curl -s http://localhost:8000/api/health
-curl -s -X POST http://localhost:8000/api/instagram -H "Content-Type: application/json" -d '{"url":"https://www.instagram.com/p/DYwoclTD2-b/"}' | head -c 100
-```
-返回正常 JSON 即 cookie 有效；报错即需更新。
+- **解决**：重新服务器登录（`xhs_login.py`），更新 `XHS_COOKIE` 进 env 文件后 restart
 
 ## 九、常驻运行（systemd）+ 一键部署
 
