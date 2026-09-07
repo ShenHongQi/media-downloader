@@ -16,6 +16,8 @@ _cache = {}  # shortcode -> (result, timestamp)
 _last_request_ts = 0
 CACHE_TTL = 3600
 REQUEST_INTERVAL = 8
+_cookies = []  # 多 cookie 轮换列表
+_cookie_idx = -1
 
 DESKTOP_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -24,8 +26,8 @@ DESKTOP_UA = (
 
 
 def init():
-    """启动时初始化 Instaloader 实例并加载 cookie/session（若有）。"""
-    global _L
+    """启动时初始化 Instaloader 实例并加载多 cookie（| 分隔）轮换池。"""
+    global _L, _cookies, _cookie_idx
     from instaloader import Instaloader
 
     _L = Instaloader(quiet=True, user_agent=DESKTOP_UA)
@@ -36,13 +38,27 @@ def init():
             print(f"[instagram] loaded session for {session_user}")
         except Exception as e:
             print(f"[instagram] session load failed (non-fatal): {e}")
-    cookie_str = os.environ.get("INSTAGRAM_COOKIE", "")
-    if cookie_str:
-        for pair in cookie_str.split(";"):
-            pair = pair.strip()
-            if "=" in pair:
-                k, v = pair.split("=", 1)
-                _L.context._session.cookies.set(k.strip(), v.strip(), domain=".instagram.com")
+
+    # 多 cookie 轮换池（| 分隔），每个含 sessionid 才有效
+    cookie_env = os.environ.get("INSTAGRAM_COOKIE", "")
+    _cookies = [c.strip() for c in cookie_env.split("|") if c.strip() and "sessionid=" in c]
+    if _cookies:
+        _apply_cookie(0)
+        print(f"[instagram] cookie pool: {len(_cookies)} accounts")
+
+
+def _apply_cookie(idx):
+    """切换 instaloader session 到第 idx 个 cookie。"""
+    global _cookie_idx
+    _cookie_idx = idx
+    cookie_str = _cookies[idx]
+    # 清旧，设新
+    _L.context._session.cookies.clear()
+    for pair in cookie_str.split(";"):
+        pair = pair.strip()
+        if "=" in pair:
+            k, v = pair.split("=", 1)
+            _L.context._session.cookies.set(k.strip(), v.strip(), domain=".instagram.com")
 
 
 def _wait_interval():
@@ -295,6 +311,11 @@ def parse(url):
 
     # 请求间隔
     _wait_interval()
+
+    # 多 cookie 轮换：每次实际请求轮换到下一个账号，降低单账号频率
+    if len(_cookies) > 1:
+        next_idx = (_cookie_idx + 1) % len(_cookies)
+        _apply_cookie(next_idx)
 
     # embed 优先（单视频帖）
     embed_result = _try_embed(shortcode, url)
