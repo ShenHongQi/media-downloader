@@ -10,6 +10,7 @@ from urllib.parse import urlparse, parse_qs
 
 STEALTH_JS_PATH = os.environ.get("STEALTH_JS_PATH", "/app/stealth.min.js")
 PERSISTENT_PROFILE = os.environ.get("XHS_PROFILE_DIR", "/root/.xhs_profile")
+XHS_PROXY = os.environ.get("XHS_PROXY", "")  # 小红书专用代理（国内 IP，绕过境外风控 300011）
 HOME = "https://www.xiaohongshu.com"
 
 DESKTOP_UA = (
@@ -57,6 +58,11 @@ def init():
         cookie_str = f"a1={a1}"
     _client = XhsClient(cookie_str, sign=_sign)
 
+    # 小红书专用代理（国内 IP，绕过境外风控 300011）
+    if XHS_PROXY:
+        _client.context._session.proxies = {"https": XHS_PROXY, "http": XHS_PROXY}
+        print(f"[xhs] using proxy: {XHS_PROXY}")
+
 
 def close():
     try:
@@ -84,6 +90,7 @@ def _resolve(url):
     with httpx.Client(
         follow_redirects=True,
         timeout=15,
+        proxy=XHS_PROXY or None,
         headers={"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"},
     ) as c:
         r = c.get(url)
